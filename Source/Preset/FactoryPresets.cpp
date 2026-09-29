@@ -47,9 +47,9 @@ juce::ValueTree makeState(const Def& d)
     return st;
 }
 
-juce::String on(const char* fx)  { return fxOn(fx); }
-juce::String amt(const char* fx) { return fxAmt(fx); }
-juce::String p2(const char* fx)  { return fxP2(fx); }
+juce::String on(const char* fx)  { return params::id::fxOn(fx); }
+juce::String amt(const char* fx) { return params::id::fxAmt(fx); }
+juce::String p2(const char* fx)  { return params::id::fxP2(fx); }
 }
 
 std::vector<Preset> createFactoryPresets()
