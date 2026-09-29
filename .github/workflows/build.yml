@@ -105,7 +105,32 @@ jobs:
 
       - name: Build (VST3 + Standalone)
         shell: bash
-        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel 4
+        run: |
+          set -o pipefail
+          # Windows: MSBuild runs one project at a time, cl.exe /MP already uses every core
+          # (more parallelism exhausts the runner's memory and kills cl.exe silently).
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            cmake --build build --config ${{ env.BUILD_TYPE }} -- -m:1 -v:minimal -clp:Summary 2>&1 | tee build.log
+          else
+            cmake --build build --config ${{ env.BUILD_TYPE }} --parallel 3 2>&1 | tee build.log
+          fi
+
+      - name: Show build errors
+        if: failure()
+        shell: bash
+        run: |
+          echo "================ ERRORS ================"
+          grep -nE "error|Error|fatal|FAILED|exited with code|killed" build.log | grep -v "warning" | head -200 || true
+          echo "================ LAST 60 LINES ================"
+          tail -60 build.log || true
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.artifact }}
+          path: build.log
+          if-no-files-found: ignore
 
       - name: Ad-hoc code sign (macOS)
         if: runner.os == 'macOS'
