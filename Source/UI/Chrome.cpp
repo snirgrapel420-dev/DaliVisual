@@ -218,7 +218,7 @@ void MeterBar::paint(juce::Graphics& g)
     g.fillEllipse(led);
 
     static const char* srcNames[] = { "HOST", "DETECT", "INT" };
-    auto text = [&](const juce::String& label, const juce::String& value, int w)
+    auto readout = [&](const juce::String& label, const juce::String& value, int w)
     {
         auto cell = r.removeFromLeft(w);
         g.setColour(textDim);
@@ -228,10 +228,10 @@ void MeterBar::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
         g.drawText(value, cell, juce::Justification::centredLeft);
     };
-    text("BPM", juce::String(bpm, 1) + " " + srcNames[juce::jlimit(0, 2, source)], 130);
-    text("FPS", output ? juce::String(juce::roundToInt(outFps)) + " OUT / " + juce::String(juce::roundToInt(fps))
+    readout("BPM", juce::String(bpm, 1) + " " + srcNames[juce::jlimit(0, 2, source)], 130);
+    readout("FPS", output ? juce::String(juce::roundToInt(outFps)) + " OUT / " + juce::String(juce::roundToInt(fps))
                        : juce::String(juce::roundToInt(fps)) + "  " + juce::String(frameMs, 1) + "ms", 150);
-    text("CPU", juce::String(cpu * 100.0f, 1) + "% audio", 120);
+    readout("CPU", juce::String(cpu * 100.0f, 1) + "% audio", 120);
     if (silent)
     {
         g.setColour(learn);

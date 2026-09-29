@@ -107,7 +107,6 @@ target_link_libraries(DaliVisual
         juce::juce_opengl
     PUBLIC
         juce::juce_recommended_config_flags
-        juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
 # ---- optional: JUCE-free unit tests for the DSP / modulation / image core ----

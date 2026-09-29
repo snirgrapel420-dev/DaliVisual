@@ -111,8 +111,7 @@ void RenderEngine::newOpenGLContextCreated()
         const juce::SpinLock::ScopedLockType sl(state.telemetry.infoLock);
         state.telemetry.rendererInfo = errors.isEmpty() ? info : info + "\nShader errors:\n" + errors.joinIntoString("\n");
     }
-    DBG("DaliVisual renderer: " << info);
-    for (auto& e : errors) DBG("  " << e);
+    DBG("DaliVisual renderer: " << info << (errors.isEmpty() ? juce::String() : "\n  " + errors.joinIntoString("\n  ")));
 
     ready = outputShader.isValid();
     startTime = lastTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
