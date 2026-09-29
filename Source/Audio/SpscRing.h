@@ -1,4 +1,7 @@
 #pragma once
+#if defined(_MSC_VER)
+ #pragma warning(disable: 4324)   // padding from alignas() is intentional (no false sharing)
+#endif
 // ============================================================================
 //  SpscRing — wait-free single-producer / single-consumer ring buffer.
 //  Producer: audio thread (never blocks, never allocates; drops on overflow).

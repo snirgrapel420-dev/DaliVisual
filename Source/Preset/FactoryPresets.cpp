@@ -47,7 +47,6 @@ juce::ValueTree makeState(const Def& d)
     return st;
 }
 
-using namespace params::id;
 juce::String on(const char* fx)  { return fxOn(fx); }
 juce::String amt(const char* fx) { return fxAmt(fx); }
 juce::String p2(const char* fx)  { return fxP2(fx); }
@@ -55,6 +54,7 @@ juce::String p2(const char* fx)  { return fxP2(fx); }
 
 std::vector<Preset> createFactoryPresets()
 {
+    using namespace params::id;
     const std::vector<Def> defs = {
         { "00 Init", {}, { { ModSource::Bass, "macroA", 0.25f } } },
 

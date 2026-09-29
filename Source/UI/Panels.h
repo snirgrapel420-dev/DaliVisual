@@ -83,7 +83,7 @@ private:
     class Row;
     void changeListenerCallback(juce::ChangeBroadcaster*) override;
     DaliVisualProcessor& proc;
-    SectionLabel header { "Modulation Matrix  ·  any source → any target" };
+    SectionLabel header { "Modulation Matrix  |  any source > any target" };
     juce::TextButton clearAll { "Clear All" };
     juce::OwnedArray<Row> rows;
 };
@@ -100,7 +100,7 @@ private:
     class Row;
     void changeListenerCallback(juce::ChangeBroadcaster*) override { resized(); }
     DaliVisualProcessor& proc;
-    SectionLabel header { "Effects Rack  ·  top → bottom" };
+    SectionLabel header { "Effects Rack  |  top > bottom" };
     juce::TextButton resetOrder { "Reset Order" };
     juce::OwnedArray<Row> rows;       // indexed by effect id (library order)
 };
@@ -110,6 +110,7 @@ class ColorPanel : public PanelBase
 {
 public:
     explicit ColorPanel(DaliVisualProcessor& p);
+    ~ColorPanel() override;
     int preferredHeight(int width) override;
     void resized() override;
 private:

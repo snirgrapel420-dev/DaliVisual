@@ -24,7 +24,7 @@ ScenePanel::ScenePanel(DaliVisualProcessor& p)
       macroA(p, params::id::macroA), macroB(p, params::id::macroB), macroC(p, params::id::macroC), macroD(p, params::id::macroD),
       intensity(p, params::id::intensity, "Intensity"), speed(p, params::id::speed, "Motion")
 {
-    for (auto* c : { (juce::Component*) &sceneHeader, &macroHeader, &globalHeader, &description,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &sceneHeader, &macroHeader, &globalHeader, &description,
                      &macroA, &macroB, &macroC, &macroD, &intensity, &speed })
         addAndMakeVisible(c);
 
@@ -92,7 +92,7 @@ AudioPanel::AudioPanel(DaliVisualProcessor& p)
       transient(p, params::id::reactTransient, "Transient"), internalBpm(p, params::id::internalBpm, "Internal BPM"),
       syncSource(p, params::id::syncSource), syncDiv(p, params::id::syncDiv)
 {
-    for (auto* c : { (juce::Component*) &inputHeader, &reactHeader, &syncHeader, &sensitivity, &smoothing, &bass, &mid,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &inputHeader, &reactHeader, &syncHeader, &sensitivity, &smoothing, &bass, &mid,
                      &high, &transient, &internalBpm, &syncSource, &syncDiv, &syncSourceLabel, &syncDivLabel, &readout })
         addAndMakeVisible(c);
     styleSmall(syncSourceLabel).setText("Clock source", juce::dontSendNotification);
@@ -110,7 +110,7 @@ void AudioPanel::timerCallback()
     const auto& t = proc.engineState.telemetry;
     juce::String s;
     s << "Clock      " << juce::String(t.bpm.load(), 1) << " BPM  (" << src[juce::jlimit(0, 2, t.clockSource.load())] << ")\n"
-      << "Detected   " << (f.bpm > 0 ? juce::String(f.bpm, 1) + " BPM" : juce::String("—"))
+      << "Detected   " << (f.bpm > 0 ? juce::String(f.bpm, 1) + " BPM" : juce::String("-"))
       << "   conf " << juce::String(juce::roundToInt(f.bpmConfidence * 100.0f)) << "%\n"
       << "Centroid   " << juce::String(f.centroid, 2) << "    Flux " << juce::String(f.flux, 2) << "\n"
       << "Width      " << juce::String(f.width, 2) << "    Pan  " << juce::String(f.pan, 2)
@@ -156,7 +156,7 @@ public:
 
         const auto names = ModulationSource::allNames();
         for (int i = 0; i < names.size(); ++i) source.addItem(names[i], i + 1);
-        target.addItem("— target —", 1);
+        target.addItem("- target -", 1);
         juce::String lastGroup;
         for (int t = 0; t < ModulationTarget::count(); ++t)
         {
@@ -231,7 +231,7 @@ public:
         bipolar.setToggleState(s.bipolar, juce::dontSendNotification);
         invert.setToggleState(s.invert, juce::dontSendNotification);
         const bool active = s.source > 0 && s.target >= 0;
-        for (auto* c : { (juce::Component*) &amount, &minS, &maxS, &smoothS, &attackS, &releaseS, &curveS, &sensS, &bipolar, &invert })
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &amount, &minS, &maxS, &smoothS, &attackS, &releaseS, &curveS, &sensS, &bipolar, &invert })
             c->setAlpha(active ? 1.0f : 0.45f);
     }
 
@@ -332,7 +332,7 @@ public:
           amount(p, params::id::fxAmt(info.id), info.p1Name),
           p2(p, params::id::fxP2(info.id), info.p2Name)
     {
-        for (auto* c : { (juce::Component*) &on, &amount, &p2, &up, &down }) addAndMakeVisible(c);
+        for (juce::Component* c : std::initializer_list<juce::Component*> { &on, &amount, &p2, &up, &down }) addAndMakeVisible(c);
         up.onClick   = [this] { move(-1); };
         down.onClick = [this] { move(+1); };
         up.setTooltip("Move earlier in the chain");
@@ -455,11 +455,13 @@ ColorPanel::ColorPanel(DaliVisualProcessor& p)
       audioColor(p, params::id::audioColor, "Audio Color"), customA(p, params::id::customHueA, "Base Hue"),
       customB(p, params::id::customHueB, "Highlight Hue")
 {
-    for (auto* c : { (juce::Component*) &paletteHeader, &gradeHeader, &customHeader, &hue, &saturation, &brightness,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &paletteHeader, &gradeHeader, &customHeader, &hue, &saturation, &brightness,
                      &contrast, &colorAmount, &colorShift, &audioColor, &customA, &customB })
         addAndMakeVisible(c);
     for (int i = 0; i < int(PaletteId::count); ++i) addAndMakeVisible(swatches.add(new Swatch(p, i)));
 }
+
+ColorPanel::~ColorPanel() = default;
 
 int ColorPanel::preferredHeight(int) { return kPad * 4 + kHeaderH * 3 + 3 * 46 + kKnobH * 2 + kKnobH; }
 
@@ -488,7 +490,7 @@ ImagePanel::ImagePanel(DaliVisualProcessor& p)
       enable(p, params::id::tplEnable, "Template On"), mirror(p, "tplMirror", "Mirror"), kaleido(p, "tplKaleido", "Kaleidoscope"),
       mode(p, params::id::tplMode), blend(p, params::id::tplBlend)
 {
-    for (auto* c : { (juce::Component*) &sourceHeader, &templateHeader, &structureHeader, &status, &loadBtn, &clearBtn,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &sourceHeader, &templateHeader, &structureHeader, &status, &loadBtn, &clearBtn,
                      &saveTpl, &loadTpl, &resetTpl, &routesBtn, &enable, &mirror, &kaleido, &mode, &blend })
         addAndMakeVisible(c);
 
@@ -505,7 +507,7 @@ ImagePanel::ImagePanel(DaliVisualProcessor& p)
     loadTpl.onClick  = [this] { loadTemplate(); };
     resetTpl.onClick = [this] { proc.templates.resetParameters(); };
     routesBtn.onClick = [this] { TemplateGenerator::addReactiveRoutes(proc.matrix); };
-    routesBtn.setTooltip("Adds Bass→Scale, Kick→Symmetry, Mid→Warp, High→Detail, Transient→Feedback, Sync LFO→Rotation");
+    routesBtn.setTooltip("Adds Bass > Scale, Kick > Symmetry, Mid > Warp, High > Detail, Transient > Feedback, Sync LFO > Rotation");
     proc.image.addChangeListener(this);
 }
 

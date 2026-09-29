@@ -23,7 +23,7 @@ enum class ModSource : int
 
 inline const char* modSourceName(ModSource s)
 {
-    static const char* names[] = { "—", "Bass", "Mid", "High", "Energy", "Kick", "Transient", "Onset", "Beat",
+    static const char* names[] = { "-", "Bass", "Mid", "High", "Energy", "Kick", "Transient", "Onset", "Beat",
         "Beat Phase", "Bar Phase", "Sync LFO", "Sync Saw", "Sync Square", "Centroid", "Flux", "Stereo Width",
         "Stereo Energy", "Stereo Pan", "RMS", "Peak", "MIDI Trigger", "Random Step" };
     const int i = int(s);

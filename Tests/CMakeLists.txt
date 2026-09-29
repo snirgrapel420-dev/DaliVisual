@@ -1,4 +1,9 @@
 # Core unit tests — no JUCE, no GPU. Run: ctest  (or ./DaliVisualCoreTests)
+# Works as a sub-directory of the main project or standalone: cmake -S Tests -B build-tests
+if(NOT DEFINED PROJECT_NAME)
+    cmake_minimum_required(VERSION 3.22)
+    project(DaliVisualCoreTests LANGUAGES CXX)
+endif()
 add_executable(DaliVisualCoreTests
     CoreTests.cpp
     ../Source/Audio/FFT.cpp

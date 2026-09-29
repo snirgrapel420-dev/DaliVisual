@@ -8,7 +8,7 @@ namespace dali
 // =============================================================================
 HeaderBar::HeaderBar(DaliVisualProcessor& p) : proc(p), scene(p, params::id::scene)
 {
-    for (auto* c : { (juce::Component*) &scene, &preset, &prev, &next, &presetMenu, &fullscreen, &displayMenu, &settings,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &scene, &preset, &prev, &next, &presetMenu, &fullscreen, &displayMenu, &settings,
                      &sceneLabel, &presetLabel })
         addAndMakeVisible(c);
     for (auto* l : { &sceneLabel, &presetLabel })
@@ -19,7 +19,7 @@ HeaderBar::HeaderBar(DaliVisualProcessor& p) : proc(p), scene(p, params::id::sce
     sceneLabel.setText("SCENE", juce::dontSendNotification);
     presetLabel.setText("PRESET", juce::dontSendNotification);
 
-    preset.setTextWhenNothingSelected("— unsaved —");
+    preset.setTextWhenNothingSelected("- unsaved -");
     preset.onChange = [this]
     {
         const int i = preset.getSelectedItemIndex();
@@ -97,9 +97,13 @@ void HeaderBar::showPresetMenu()
             case 2: askName("Save Preset As", current.isNotEmpty() ? current : "My Preset", [this](juce::String n) { proc.presets.save(n); }); break;
             case 3: pm.duplicate(); break;
             case 4:
-                juce::AlertWindow::showOkCancelBox(juce::MessageBoxIconType::QuestionIcon, "Delete preset",
-                    "Delete \"" + current + "\"?", "Delete", "Cancel", nullptr,
-                    juce::ModalCallbackFunction::create([this, current](int ok) { if (ok) proc.presets.remove(current); }));
+                juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                                 .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                                 .withTitle("Delete preset")
+                                                 .withMessage("Delete \"" + current + "\"?")
+                                                 .withButton("Delete")
+                                                 .withButton("Cancel"),
+                                             [this, current](int result) { if (result == 1) proc.presets.remove(current); });
                 break;
             case 5: pm.refresh(); break;
             case 6: PresetManager::getPresetFolder().revealToUser(); break;
@@ -241,7 +245,7 @@ void MeterBar::paint(juce::Graphics& g)
 // =============================================================================
 SettingsPanel::SettingsPanel(DaliVisualProcessor& p) : proc(p)
 {
-    for (auto* c : { (juce::Component*) &outHeader, &midiHeader, &infoHeader, &display, &resolution, &displayLabel,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &outHeader, &midiHeader, &infoHeader, &display, &resolution, &displayLabel,
                      &resolutionLabel, &midiLast, &info, &vsync, &previewWhileOutput, &noteScenes, &programScenes,
                      &openOutput, &clearMidi, &factory, &close })
         addAndMakeVisible(c);
@@ -294,7 +298,7 @@ void SettingsPanel::timerCallback()
 {
     if (!isVisible()) return;
     const auto last = proc.midi.getLastMessageText();
-    midiLast.setText("Last MIDI: " + (last.isNotEmpty() ? last : juce::String("—")), juce::dontSendNotification);
+    midiLast.setText("Last MIDI: " + (last.isNotEmpty() ? last : juce::String("-")), juce::dontSendNotification);
     juce::String renderer;
     { const juce::SpinLock::ScopedLockType sl(proc.engineState.telemetry.infoLock); renderer = proc.engineState.telemetry.rendererInfo; }
     juce::String s;
