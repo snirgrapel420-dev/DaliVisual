@@ -1,0 +1,526 @@
+#include "RenderEngine.h"
+#include "../Output/FrameSink.h"
+
+using namespace juce::gl;
+
+namespace dali
+{
+namespace
+{
+inline float smoothTo(float cur, float target, float dt, float tau) noexcept
+{
+    return tau <= 1e-4f ? target : cur + (target - cur) * (1.0f - std::exp(-dt / tau));
+}
+constexpr float kFadeSeconds = 0.6f;
+}
+
+// =============================================================================
+RenderEngine::RenderEngine(EngineState& s, juce::OpenGLContext& c, Role r)
+    : state(s), context(c), role(r)
+{
+    using namespace params;
+    auto I = [](const juce::String& pid) { const int i = indexOf(pid); jassert(i >= 0); return i; };
+    pScene = I(id::scene); pIntensity = I(id::intensity); pSpeed = I(id::speed);
+    pMacro[0] = I(id::macroA); pMacro[1] = I(id::macroB); pMacro[2] = I(id::macroC); pMacro[3] = I(id::macroD);
+    pSensitivity = I(id::sensitivity); pSmoothing = I(id::smoothing);
+    pReact[0] = I(id::reactBass); pReact[1] = I(id::reactMid); pReact[2] = I(id::reactHigh); pReact[3] = I(id::reactTransient);
+    pSyncSource = I(id::syncSource); pSyncDiv = I(id::syncDiv); pInternalBpm = I(id::internalBpm);
+    pPalette = I(id::palette); pHue = I(id::hue); pSat = I(id::saturation); pBright = I(id::brightness);
+    pContrast = I(id::contrast); pColorAmount = I(id::colorAmount); pColorShift = I(id::colorShift);
+    pAudioColor = I(id::audioColor); pCustomA = I(id::customHueA); pCustomB = I(id::customHueB);
+    pTplEnable = I(id::tplEnable); pTplMode = I(id::tplMode); pTplBlend = I(id::tplBlend); pTplMix = I(id::tplMix);
+    pTplMirror = I("tplMirror"); pTplKaleido = I("tplKaleido"); pTplRotation = I("tplRotation"); pTplMotion = I("tplMotion");
+
+    tplUniforms = {
+        { "uTScale", I("tplScale") }, { "uTSym", I("tplSymmetry") }, { "uTSymCount", I("tplSymCount") },
+        { "uTWarp", I("tplWarp") }, { "uTTwist", I("tplTwist") }, { "uTNoise", I("tplNoise") },
+        { "uTDistortion", I("tplDistortion") }, { "uTFeedback", I("tplFeedback") }, { "uTRecursion", I("tplRecursion") },
+        { "uTEdge", I("tplEdge") }, { "uTThreshold", I("tplThreshold") }, { "uTLuminance", I("tplLuminance") },
+        { "uTColorExtract", I("tplColorExtract") }, { "uTColorAmount", I("tplColorAmount") }, { "uTDetail", I("tplDetail") },
+        { "uTComplexity", I("tplComplexity") }, { "uTDepth", I("tplDepth") }, { "uTReact", I("tplReact") } };
+
+    for (auto& e : effectLibrary())
+    {
+        pFxOn.push_back(I(id::fxOn(e.id)));
+        pFxAmt.push_back(I(id::fxAmt(e.id)));
+        pFxP2.push_back(I(id::fxP2(e.id)));
+    }
+    modOffsets.assign(modTargets().size(), 0.0f);
+}
+
+RenderEngine::~RenderEngine() = default;
+
+// =============================================================================
+//  parameter access: atomic reads of the APVTS parameters + modulation offsets
+// =============================================================================
+float RenderEngine::effective(int index) const noexcept
+{
+    auto* p = state.param(index);
+    if (p == nullptr) return 0.0f;
+    float n = p->getValue();
+    const int t = params::modTargetOf(index);
+    if (t >= 0) n = juce::jlimit(0.0f, 1.0f, n + modOffsets[size_t(t)]);
+    return p->convertFrom0to1(n);
+}
+
+int RenderEngine::choice(int index) const noexcept
+{
+    auto* p = state.param(index);
+    return p != nullptr ? juce::roundToInt(p->convertFrom0to1(p->getValue())) : 0;
+}
+
+bool RenderEngine::flag(int index) const noexcept
+{
+    auto* p = state.param(index);
+    return p != nullptr && p->getValue() > 0.5f;
+}
+
+// =============================================================================
+//  GL lifecycle
+// =============================================================================
+void RenderEngine::newOpenGLContextCreated()
+{
+    glGenVertexArrays(1, &vao);
+    vertexSrc = Shader::resource("fullscreen_vert");
+
+    juce::StringArray errors;
+    auto check = [&](Shader& s, bool ok) { if (!ok) errors.add(s.getName() + ": " + s.getError()); };
+
+    scenes.clear();
+    for (auto& info : sceneLibrary())
+    {
+        auto sc = std::make_unique<VisualScene>(info);
+        check(sc->shader, sc->compile(vertexSrc));
+        scenes.push_back(std::move(sc));
+    }
+    effects.clear();
+    for (auto& info : effectLibrary())
+    {
+        auto fx = std::make_unique<VisualEffect>(info);
+        check(fx->shader, fx->compile(vertexSrc));
+        effects.push_back(std::move(fx));
+    }
+    check(templateLayer,     templateLayer.build(vertexSrc, Shader::assembleFragment(Shader::resource("template_layer_frag")), "Template Layer"));
+    check(templateComposite, templateComposite.build(vertexSrc, Shader::assembleFragment(Shader::resource("template_composite_frag")), "Template Composite"));
+    check(outputShader,      outputShader.build(vertexSrc, Shader::assembleFragment(Shader::resource("output_frag")), "Output"));
+    check(crossfade,         crossfade.build(vertexSrc, Shader::assembleFragment(Shader::resource("crossfade_frag")), "Crossfade"));
+
+    const juce::String info = juce::String((const char*) glGetString(GL_RENDERER)) + "  |  OpenGL "
+                            + juce::String((const char*) glGetString(GL_VERSION));
+    {
+        const juce::SpinLock::ScopedLockType sl(state.telemetry.infoLock);
+        state.telemetry.rendererInfo = errors.isEmpty() ? info : info + "\nShader errors:\n" + errors.joinIntoString("\n");
+    }
+    DBG("DaliVisual renderer: " << info);
+    for (auto& e : errors) DBG("  " << e);
+
+    ready = outputShader.isValid();
+    startTime = lastTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    fpsWindowStart = startTime;
+    dnaVersion = 0xffffffffu;
+    lastVsync = -1;
+    currentScene = fadeFromScene = -1;
+}
+
+void RenderEngine::openGLContextClosing()
+{
+    {
+        const juce::SpinLock::ScopedLockType sl(state.sinkLock);
+        for (auto* s : state.sinks) s->contextClosing();
+    }
+    for (auto& s : scenes)  { s->shader.release(); s->history.release(); }
+    for (auto& e : effects) { e->shader.release(); e->history.release(); }
+    scenes.clear(); effects.clear();
+    templateLayer.release(); templateComposite.release(); outputShader.release(); crossfade.release();
+    templateHistory.release(); composite.release(); fadeTarget.release(); fxA.release(); fxB.release(); finalTarget.release();
+    if (dnaTex != 0)   glDeleteTextures(1, &dnaTex);
+    if (colorTex != 0) glDeleteTextures(1, &colorTex);
+    dnaTex = colorTex = 0;
+    hasImage = false;
+    if (vao != 0) glDeleteVertexArrays(1, &vao);
+    vao = 0;
+    ready = false;
+}
+
+// =============================================================================
+//  analysis → smoothed uniforms + musical clock
+// =============================================================================
+void RenderEngine::updateAnalysis(double now, float dt)
+{
+    const auto snap = state.analyzer.snapshot();
+    const auto& f = snap.features;
+
+    const float tau  = effective(pSmoothing) * 0.25f;          // 0 .. 250 ms
+    const float fast = tau * 0.3f;
+    const float rb = effective(pReact[0]), rm = effective(pReact[1]), rh = effective(pReact[2]), rt = effective(pReact[3]);
+
+    au.bass         = smoothTo(au.bass,         f.bassEnv * rb,     dt, tau);
+    au.mid          = smoothTo(au.mid,          f.midEnv * rm,      dt, tau);
+    au.high         = smoothTo(au.high,         f.highEnv * rh,     dt, tau);
+    au.energy       = smoothTo(au.energy,       f.energy,           dt, tau);
+    au.kick         = smoothTo(au.kick,         f.kick * rb,        dt, fast);
+    au.transient    = smoothTo(au.transient,    f.transient * rt,   dt, fast);
+    au.onset        = smoothTo(au.onset,        f.onset,            dt, fast);
+    au.centroid     = smoothTo(au.centroid,     f.centroid,         dt, tau);
+    au.flux         = smoothTo(au.flux,         f.flux,             dt, fast);
+    au.width        = smoothTo(au.width,        f.width,            dt, tau);
+    au.pan          = smoothTo(au.pan,          f.pan,              dt, tau);
+    au.stereoEnergy = smoothTo(au.stereoEnergy, f.stereoEnergy,     dt, tau);
+    au.rms          = smoothTo(au.rms,          f.rms,              dt, tau);
+    au.peak         = smoothTo(au.peak,         f.peak,             dt, fast);
+
+    DetectedTiming det;
+    det.bpm = f.bpm; det.confidence = f.bpmConfidence; det.beatPhase = f.beatPhase; det.stamp = snap.stamp;
+    clock.update(now, dt, SyncSource(choice(pSyncSource)), state.host.read(), det,
+                 effective(pInternalBpm), choice(pSyncDiv));
+    if (clock.beatHappened()) randomStep = random.nextFloat();
+
+    const auto midiCount = state.midiTriggerCount.load();
+    if (midiCount != lastMidiCount) { lastMidiCount = midiCount; midiEnv = juce::jmax(midiEnv, state.midiTriggerVelocity.load()); }
+    else midiEnv *= std::exp(-dt * 6.0f);
+}
+
+void RenderEngine::updateModulation(float dt)
+{
+    const float sp = clock.syncPhase();
+    sources[ModSource::None]         = 0.0f;
+    sources[ModSource::Bass]         = au.bass;
+    sources[ModSource::Mid]          = au.mid;
+    sources[ModSource::High]         = au.high;
+    sources[ModSource::Energy]       = au.energy;
+    sources[ModSource::Kick]         = au.kick;
+    sources[ModSource::Transient]    = au.transient;
+    sources[ModSource::Onset]        = au.onset;
+    sources[ModSource::Beat]         = clock.beatPulse();
+    sources[ModSource::BeatPhase]    = clock.beatPhase();
+    sources[ModSource::BarPhase]     = clock.barPhase();
+    sources[ModSource::SyncLFO]      = 0.5f - 0.5f * std::cos(juce::MathConstants<float>::twoPi * sp);
+    sources[ModSource::SyncSaw]      = sp;
+    sources[ModSource::SyncSquare]   = sp < 0.5f ? 1.0f : 0.0f;
+    sources[ModSource::Centroid]     = au.centroid;
+    sources[ModSource::Flux]         = au.flux;
+    sources[ModSource::StereoWidth]  = au.width;
+    sources[ModSource::StereoEnergy] = au.stereoEnergy;
+    sources[ModSource::StereoPan]    = 0.5f + 0.5f * au.pan;
+    sources[ModSource::RMS]          = au.rms;
+    sources[ModSource::Peak]         = au.peak;
+    sources[ModSource::MidiTrigger]  = midiEnv;
+    sources[ModSource::RandomStep]   = randomStep;
+
+    const auto version = state.matrix.getVersion();
+    if (version != lastMatrixVersion) { lastMatrixVersion = version; modEngine.reset(); }
+
+    const auto slots = state.matrix.getSlots();
+    modEngine.process(slots, sources, dt, modOffsets.data(), int(modOffsets.size()));
+}
+
+void RenderEngine::uploadImageIfChanged()
+{
+    const auto v = state.image.getVersion();
+    if (v == dnaVersion) return;
+    dnaVersion = v;
+
+    auto dna = state.image.getDNA();
+    if (dna == nullptr || !dna->isValid()) { hasImage = false; return; }
+
+    auto upload = [&](unsigned int& tex, const std::vector<float>& data)
+    {
+        if (tex == 0) glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, dna->width, dna->height, 0, GL_RGBA, GL_FLOAT, data.data());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    };
+    upload(dnaTex, dna->dna);
+    upload(colorTex, dna->color);
+    imgAspect = dna->aspect;
+    hasImage = true;
+    templateHistory.clear();
+}
+
+// =============================================================================
+//  drawing helpers
+// =============================================================================
+void RenderEngine::bindTexture(int unit, unsigned int tex)
+{
+    glActiveTexture(GLenum(GL_TEXTURE0 + unit));
+    glBindTexture(GL_TEXTURE_2D, tex);
+}
+
+void RenderEngine::drawFullscreen() { glDrawArrays(GL_TRIANGLES, 0, 3); }
+
+void RenderEngine::setCommon(Shader& s, int w, int h)
+{
+    s.use();
+    s.set("uRes", float(w), float(h));
+    s.set("uTime", float(std::fmod(sceneTime, 7200.0)));
+    s.set("uAbsTime", float(std::fmod(lastTime - startTime, 3600.0)));
+    s.set("uBass", au.bass);       s.set("uMid", au.mid);         s.set("uHigh", au.high);
+    s.set("uEnergy", au.energy);   s.set("uKick", au.kick);       s.set("uTransient", au.transient);
+    s.set("uBeat", clock.beatPulse());
+    s.set("uCentroid", au.centroid); s.set("uFlux", au.flux); s.set("uWidth", au.width); s.set("uPan", au.pan);
+    s.set("uBeatPhase", clock.beatPhase()); s.set("uBarPhase", clock.barPhase()); s.set("uSyncPhase", clock.syncPhase());
+    s.set("uBeatClock", float(std::fmod(clock.beatClock(), 256.0)));
+    s.set("uMacro", effective(pMacro[0]), effective(pMacro[1]), effective(pMacro[2]), effective(pMacro[3]));
+    s.set("uIntensity", effective(pIntensity));
+    color.apply(s);
+    s.set("uTex", 0); s.set("uPrev", 1); s.set("uDNA", 2); s.set("uImgColor", 3); s.set("uLayer", 4);
+}
+
+void RenderEngine::renderScene(VisualScene& sc, int w, int h)
+{
+    if (sc.history.ensure(w, h)) sc.history.clear();
+    auto& target = sc.history.current();
+    auto& prev = sc.history.previous();
+    target.bind();
+    setCommon(sc.shader, w, h);
+    bindTexture(0, prev.texture());
+    bindTexture(1, prev.texture());
+    drawFullscreen();
+    sc.history.swap();                          // previous() now holds this frame
+}
+
+// =============================================================================
+//  frame
+// =============================================================================
+void RenderEngine::renderOpenGL()
+{
+    if (!ready) return;
+
+    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const float dt = (float) juce::jlimit(0.0, 0.1, now - lastTime);
+    lastTime = now;
+
+    const int vs = state.output.vsync.load() ? 1 : 0;
+    if (vs != lastVsync) { context.setSwapInterval(vs); lastVsync = vs; }
+
+    GLint screenFbo = 0;
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &screenFbo);
+
+    const double scale = context.getRenderingScale();
+    const int physW = juce::jmax(1, juce::roundToInt(logicalW.load() * scale));
+    const int physH = juce::jmax(1, juce::roundToInt(logicalH.load() * scale));
+
+    const bool outputActive = state.telemetry.outputActive.load();
+    const bool isPreview = role == Role::Preview;
+
+    if (isPreview && outputActive && !state.output.previewWhileOutput.load())
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, GLuint(screenFbo));
+        glViewport(0, 0, physW, physH);
+        glClearColor(0.03f, 0.015f, 0.05f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        return;
+    }
+
+    float resScale = OutputSettings::scaleFor(state.output.renderScaleIndex.load());
+    if (isPreview && outputActive) resScale *= 0.5f;           // keep the GPU for the projector
+    const int w = juce::jmax(16, juce::roundToInt(physW * resScale));
+    const int h = juce::jmax(16, juce::roundToInt(physH * resScale));
+
+    updateAnalysis(now, dt);
+    updateModulation(dt);
+
+    const float speed = effective(pSpeed);
+    sceneTime += dt * speed;
+    templateMotion += dt * effective(pTplMotion) * (0.5 + 0.5 * speed);
+
+    ColorSystem::Inputs ci;
+    ci.palette = choice(pPalette); ci.customHueA = effective(pCustomA); ci.customHueB = effective(pCustomB);
+    ci.colorShift = effective(pColorShift); ci.audioColor = effective(pAudioColor); ci.colorAmount = effective(pColorAmount);
+    ci.centroid = au.centroid; ci.flux = au.flux; ci.kick = au.kick;
+    color.update(ci, dt);
+
+    uploadImageIfChanged();
+
+    glBindVertexArray(vao);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+
+    // ---- 1. scene (+ crossfade on change) ----------------------------------------------------
+    const int sceneIndex = juce::jlimit(0, int(scenes.size()) - 1, choice(pScene));
+    if (sceneIndex != currentScene)
+    {
+        if (currentScene >= 0 && currentScene != sceneIndex) { fadeFromScene = currentScene; fadeAmount = 0.0f; }
+        currentScene = sceneIndex;
+        scenes[size_t(sceneIndex)]->history.clear();
+    }
+
+    VisualScene& scene = *scenes[size_t(currentScene)];
+    if (scene.shader.isValid()) renderScene(scene, w, h);
+    else { scene.history.ensure(w, h); }
+    unsigned int src = scene.history.previous().texture();
+
+    if (fadeFromScene >= 0)
+    {
+        fadeAmount += dt / kFadeSeconds;
+        VisualScene& old = *scenes[size_t(fadeFromScene)];
+        if (fadeAmount >= 1.0f || !old.shader.isValid() || !crossfade.isValid())
+        {
+            old.history.release();
+            fadeFromScene = -1;
+        }
+        else
+        {
+            renderScene(old, w, h);
+            fadeTarget.ensure(w, h);
+            fadeTarget.bind();
+            setCommon(crossfade, w, h);
+            crossfade.set("uMix", fadeAmount);
+            bindTexture(0, old.history.previous().texture());
+            bindTexture(4, src);
+            drawFullscreen();
+            src = fadeTarget.texture();
+        }
+    }
+
+    // ---- 2. image template layer ------------------------------------------------------------------
+    if (hasImage && flag(pTplEnable) && templateLayer.isValid() && templateComposite.isValid())
+    {
+        if (templateHistory.ensure(w, h)) templateHistory.clear();
+        templateHistory.current().bind();
+        setCommon(templateLayer, w, h);
+        for (auto& [uniform, index] : tplUniforms) templateLayer.set(uniform, effective(index));
+        templateLayer.set("uTMode", choice(pTplMode));
+        templateLayer.set("uTMirror", flag(pTplMirror) ? 1.0f : 0.0f);
+        templateLayer.set("uTKaleido", flag(pTplKaleido) ? 1.0f : 0.0f);
+        templateLayer.set("uTAngle", float(effective(pTplRotation) * juce::MathConstants<double>::twoPi + templateMotion * 0.5));
+        templateLayer.set("uTMotion", float(std::fmod(templateMotion, 1000.0)));
+        templateLayer.set("uImgAspect", imgAspect);
+        bindTexture(0, src);
+        bindTexture(1, templateHistory.previous().texture());
+        bindTexture(2, dnaTex);
+        bindTexture(3, colorTex);
+        drawFullscreen();
+        templateHistory.swap();
+
+        composite.ensure(w, h);
+        composite.bind();
+        setCommon(templateComposite, w, h);
+        templateComposite.set("uTMix", effective(pTplMix));
+        templateComposite.set("uTBlend", choice(pTplBlend));
+        bindTexture(0, src);
+        bindTexture(4, templateHistory.previous().texture());
+        drawFullscreen();
+        src = composite.texture();
+    }
+
+    // ---- 3. effects rack ---------------------------------------------------------------------------
+    const auto order = state.effects.getOrder();
+    bool useA = true;
+    for (int pos = 0; pos < EffectChain::kNumEffects; ++pos)
+    {
+        const int e = order[size_t(pos)];
+        VisualEffect& fx = *effects[size_t(e)];
+        const bool on = flag(pFxOn[size_t(e)]) && fx.shader.isValid();
+        if (!on)
+        {
+            if (fx.wasActive && fx.info.stateful) fx.history.release();
+            fx.wasActive = false;
+            continue;
+        }
+
+        RenderTarget* out = nullptr;
+        unsigned int prevTex = src;
+        if (fx.info.stateful)
+        {
+            if (fx.history.ensure(w, h) || !fx.wasActive) fx.history.clear();
+            out = &fx.history.current();
+            prevTex = fx.history.previous().texture();
+        }
+        else
+        {
+            out = useA ? &fxA : &fxB;
+            if (out->texture() == src) { useA = !useA; out = useA ? &fxA : &fxB; }
+            out->ensure(w, h);
+            useA = !useA;
+        }
+        fx.wasActive = true;
+
+        out->bind();
+        setCommon(fx.shader, w, h);
+        fx.shader.set("uAmt", effective(pFxAmt[size_t(e)]));
+        fx.shader.set("uP2",  effective(pFxP2[size_t(e)]));
+        bindTexture(0, src);
+        bindTexture(1, prevTex);
+        drawFullscreen();
+        src = out->texture();
+        if (fx.info.stateful) fx.history.swap();
+    }
+
+    // ---- 4. output ------------------------------------------------------------------------------------
+    auto runOutput = [&](int vw, int vh)
+    {
+        setCommon(outputShader, vw, vh);
+        outputShader.set("uHue", effective(pHue));
+        outputShader.set("uSaturation", effective(pSat));
+        outputShader.set("uBrightness", effective(pBright));
+        outputShader.set("uContrast", effective(pContrast));
+        bindTexture(0, src);
+        drawFullscreen();
+    };
+
+    const bool publisher = (role == Role::Output) || !outputActive;
+    bool haveSinks = false;
+    { const juce::SpinLock::ScopedLockType sl(state.sinkLock); haveSinks = !state.sinks.isEmpty(); }
+    if (publisher && haveSinks)
+    {
+        finalTarget.ensure(w, h);
+        finalTarget.bind();
+        runOutput(w, h);
+        const juce::SpinLock::ScopedLockType sl(state.sinkLock);
+        for (auto* s : state.sinks) s->publishFrame(finalTarget.texture(), w, h);
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, GLuint(screenFbo));
+    glViewport(0, 0, physW, physH);
+    runOutput(physW, physH);
+
+    bindTexture(4, 0); bindTexture(3, 0); bindTexture(2, 0); bindTexture(1, 0); bindTexture(0, 0);
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    publishTelemetry(now);
+}
+
+void RenderEngine::publishTelemetry(double now)
+{
+    ++frameCounter;
+    const bool isPreview = role == Role::Preview;
+    if (now - fpsWindowStart >= 0.5)
+    {
+        const float fps = float(frameCounter / (now - fpsWindowStart));
+        (isPreview ? state.telemetry.previewFps : state.telemetry.outputFps).store(fps);
+        if (!isPreview || !state.telemetry.outputActive.load())
+            state.telemetry.frameMs.store(fps > 0 ? 1000.0f / fps : 0.0f);
+        frameCounter = 0;
+        fpsWindowStart = now;
+    }
+
+    // Clock + modulation telemetry comes from the engine showing the main picture.
+    const bool mainPicture = isPreview ? !state.telemetry.outputActive.load() || state.output.previewWhileOutput.load()
+                                       : true;
+    if (!mainPicture) return;
+
+    state.telemetry.bpm.store(float(clock.bpm()));
+    state.telemetry.clockSource.store(int(clock.source()));
+    state.telemetry.beatPulse.store(clock.beatPulse());
+
+    const auto& targets = params::modTargets();
+    for (size_t t = 0; t < targets.size(); ++t)
+    {
+        const int pi = targets[t];
+        if (pi >= EngineState::kMaxParams) continue;
+        if (std::abs(modOffsets[t]) > 1e-4f)
+        {
+            auto* p = state.param(pi);
+            state.modulated[size_t(pi)].store(p != nullptr ? juce::jlimit(0.0f, 1.0f, p->getValue() + modOffsets[t]) : -1.0f);
+        }
+        else state.modulated[size_t(pi)].store(-1.0f);
+    }
+}
+} // namespace dali
