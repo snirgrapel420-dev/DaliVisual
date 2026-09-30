@@ -159,13 +159,4 @@ private:
     ParamCombo overlayMode, blend;
     std::unique_ptr<juce::FileChooser> chooser;
 };
-    juce::Rectangle<int> dropZone;
-    juce::Label status;
-    juce::TextButton loadBtn { "Load Image" }, clearBtn { "Clear" }, saveTpl { "Save Template" },
-                     loadTpl { "Load Template" }, resetTpl { "Reset" }, routesBtn { "Add Audio Routes" };
-    ParamToggle enable, mirror, kaleido;
-    ParamCombo mode, blend;
-    juce::OwnedArray<ParamKnob> knobs;
-    std::unique_ptr<juce::FileChooser> chooser;
-};
 } // namespace dali
