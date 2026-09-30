@@ -29,6 +29,9 @@ uniform float uHat;          // hi-hat envelope
 uniform float uBuild;        // 0..1 tension of a breakdown / build-up
 uniform float uDrop;         // 1 at a drop (kick returns after a breakdown), decays
 uniform float uActivity;     // 0 in silence .. 1 while music plays
+// time that only advances while its band sounds (Synesthesia-style "band time"):
+// motion tied to uBassTime moves with the bass and stops when the bass stops
+uniform float uBassTime, uMidTime, uHighTime, uLevelTime;
 
 // --- musical clock -------------------------------------------------------
 uniform float uBeatPhase;    // 0..1 within the current beat
@@ -51,6 +54,7 @@ uniform float uColorAmount;
 // --- textures ------------------------------------------------------------
 uniform sampler2D uTex;      // effect input / primary input
 uniform sampler2D uPrev;     // this pass' own previous frame (feedback)
+uniform sampler2D uSpectrum; // 128 x 2: row 0 = log spectrum 30 Hz..16 kHz (0..1), row 1 = waveform (-1..1)
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -120,3 +124,22 @@ vec3 safeHDR(vec3 c) { return clamp(c, 0.0, 8.0); }
 
 // smoothstep with descending edges (defined behaviour on every driver)
 float smoothstepR(float e0, float e1, float x) { return 1.0 - smoothstep(e1, e0, x); }
+
+// ---- the sound itself ----------------------------------------------------------
+// spectrum at log-frequency position x (0 = 30 Hz, 0.5 ~ 700 Hz, 1 = 16 kHz)
+float spec(float x)  { return texture(uSpectrum, vec2(clamp(x, 0.0, 1.0), 0.25)).r; }
+// average level over a log-frequency range
+float specBand(float a, float b)
+{
+    float s = 0.0;
+    for (int i = 0; i < 6; ++i) s += spec(mix(a, b, (float(i) + 0.5) / 6.0));
+    return s / 6.0;
+}
+// waveform at position x (0..1 across the latest ~11 ms)
+float wave(float x)  { return texture(uSpectrum, vec2(fract(x), 0.75)).r; }
+
+// ---- quality helpers -----------------------------------------------------------------
+// ACES-fitted filmic curve (keeps saturated neon without clipping to white)
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+// iq's rich cosine palette on the current palette uniforms, with an extra brightness lift
+vec3 pal(float t) { return palette(t); }

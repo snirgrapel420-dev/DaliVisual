@@ -382,6 +382,38 @@ static void testBuildDrop()
     CHECK(fx.features().build < 0.05f, "build after silence %.3f", fx.features().build);
 }
 
+static void testSpectrumWave()
+{
+    const double sr = 48000;
+    for (double hz : { 100.0, 1000.0, 6000.0 })
+    {
+        std::vector<float> s(size_t(sr * 1.5));
+        for (size_t i = 0; i < s.size(); ++i) s[i] = 0.3f * float(std::sin(2 * PI * hz * i / sr));
+        dali::FeatureExtractor fx; fx.prepare(sr);
+        runExtractor(fx, Track { s, s, {} });
+        const auto& f = fx.features();
+        int arg = 0; for (int i = 1; i < dali::AudioFeatures::kSpectrumBands; ++i) if (f.spectrum[size_t(i)] > f.spectrum[size_t(arg)]) arg = i;
+        const double expect = dali::AudioFeatures::kSpectrumBands * std::log(hz / 30.0) / std::log(16000.0 / 30.0);
+        float far = 0; for (int i = 0; i < dali::AudioFeatures::kSpectrumBands; ++i) if (std::abs(i - expect) > 20) far = std::max(far, f.spectrum[size_t(i)]);
+        float wmax = 0, wmean = 0; for (float w : f.wave) { wmax = std::max(wmax, std::abs(w)); wmean += w; }
+        wmean /= float(f.wave.size());
+        std::printf("[Spectrum] %5.0f Hz -> band %3d (expected %.1f)  peak %.2f  far-away max %.2f  wave |max| %.2f mean %+.2f\n",
+                    hz, arg, expect, f.spectrum[size_t(arg)], far, wmax, wmean);
+        CHECK(std::abs(arg - expect) <= 2.0, "%.0f Hz sine peaks in band %d, expected %.1f", hz, arg, expect);
+        CHECK(f.spectrum[size_t(arg)] > 0.8f, "peak level %.2f", f.spectrum[size_t(arg)]);
+        CHECK(far < 0.35f, "energy far from the tone %.2f", far);
+        CHECK(wmax > 0.85f && std::abs(wmean) < 0.25f, "waveform max %.2f mean %.2f", wmax, wmean);
+    }
+    // silence → spectrum and waveform fall to zero
+    dali::FeatureExtractor fx; fx.prepare(sr);
+    auto t = makeTrack(128, 4, sr);
+    runExtractor(fx, t);
+    std::vector<float> z(size_t(sr * 2), 0.0f);
+    runExtractor(fx, Track { z, z, {} });
+    float mx = 0; for (float v : fx.features().spectrum) mx = std::max(mx, v);
+    CHECK(mx < 0.02f, "spectrum after silence %.3f", mx);
+}
+
 int main()
 {
     testFFT();
@@ -393,6 +425,7 @@ int main()
     testClock();
     testDrumHits();
     testBuildDrop();
+    testSpectrumWave();
     testImageDNA();
     testExtractorCost();
     std::printf("\n%d checks, %d failures\n", checks, failures);

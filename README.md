@@ -1,9 +1,22 @@
-# DALI VISUAL 2 — by DALI AUDIO
+# DALI VISUAL 3 — by DALI AUDIO
 
 Audio-reactive generative visual instrument. **VST3 + Standalone**, one shared engine.
 C++17 · JUCE 8 · CMake · OpenGL 3.2 core / GLSL 150.
 
 ---
+
+## מה חדש ב-v3 (עברית)
+
+* **הוויזואל מגיב לסאונד עצמו, לא רק ל-BPM** – כל סצנה מקבלת את הספקטרום המלא (128 פסים) ואת צורת הגל,
+  ו"שעונים" נפרדים לכל תחום תדרים: תנועה שקשורה לבס זזה רק כשיש בס.
+* **8 סצנות חדשות ברמה גבוהה** (09–16): Kali Cathedral, Spectral Mandala, Julia Bloom, Hyperspace,
+  Iridescent Oil, Hyperbolic Dream, Infinite Feedback, Waveform Geometry.
+* **Bloom + ACES** – זוהר אמיתי וצבעי ניאון רוויים בלי שריפה (פקד *Bloom* בעמוד COLOR).
+* **17 פריסטים חדשים** (20–36). מקשים 1–9 ו-0 לסצנות 1–10.
+* **Image Reactor (סצנה 17)** – התמונה עצמה היא הוויזואל, לא שכבה על סצנה אחרת. גוררים תמונה → היא הופכת לוויזואל.
+  8 מצבים: Kaleidoscope, Liquid, Tunnel, Spectral Slices, Droste, Glitch, Depth 3D, Neon Outline –
+  כולם מונעים מהסאונד עצמו (שעוני התדרים והספקטרום), בלי BPM sync. תמונות עם שקיפות "צפות" בחלל; תמונות רגילות נשארות שלמות.
+  7 פריסטים (09, 10, 37–42). השכבה הישנה נשארה כאופציה מתקדמת: "Overlay on current scene".
 
 ## מה חדש ב-v2 (עברית)
 
@@ -56,6 +69,24 @@ Install the VST3: copy `Dali Visual.vst3` to
 Core unit tests (no JUCE, no GPU): `cmake -B build -DDALI_BUILD_TESTS=ON && cmake --build build --target DaliVisualCoreTests`
 
 ---
+
+## What's new in v3 — the picture follows the sound itself
+
+* **Full audio picture on the GPU** — every scene can read a 128-band log spectrum (30 Hz–16 kHz, pink-weighted,
+  auto-levelled) and the live waveform (`uSpectrum`, helpers `spec()`, `specBand()`, `wave()` in common.glsl).
+* **Band times** — `uBassTime`, `uMidTime`, `uHighTime`, `uLevelTime` advance only while their band sounds, so motion
+  is driven by what is playing, not by a tempo clock.
+* **8 new scenes (09–16)**, all validated on a real GL driver: raymarched fractal cathedral, spectrum mandala with
+  feedback echoes, morphing Julia set (cardioid-boundary path, always connected), fractal-ornament hyperspace tunnel,
+  thin-film iridescent oil, hyperbolic {p,q} tiling on the Poincaré disk, kaleidoscopic video feedback, and
+  waveform-drawn sacred geometry. Each maps kick / snare / hi-hat / build / drop and the spectrum to its structure.
+* **Output quality** — mip-chain bloom (*Bloom* parameter) and ACES filmic tone mapping for all scenes.
+* **Image Reactor (scene 17)** — the dropped image itself becomes the visual (no longer an overlay on another scene).
+  8 modes — Kaleidoscope, Liquid, Tunnel, Spectral Slices (every strip is a frequency), Droste, Glitch, Depth 3D
+  (steep parallax on luminance), Neon Outline — all driven by band clocks and the spectrum, never by a tempo grid.
+  Images with transparency float in a dark void; photos stay whole. 13 image controls + 8 live mode buttons in the
+  IMAGE tab; the previous overlay remains available as "Overlay on current scene".
+* **17 new factory presets** (20–36) + 7 Image Reactor presets (09, 10, 37–42) Keys 1–9 and 0 select scenes 1–10; MIDI notes from C1 upward select all 16.
 
 ## What's new in v2
 
@@ -164,7 +195,7 @@ Verified in the development environment:
 * **All 33 shaders** compile, link and render on a real OpenGL 3.2 core driver (Mesa), assembled exactly
   as the plug-in assembles them — `Tools/ShaderHarness` (renders contact sheets of every scene, effect,
   template mode and palette; checks for NaN / black / blown-out output).
-* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 65 checks (v2: kick 25/25, snare 25/25, hat 100/100, 0 false snares, one drop at the right moment): BPM detection at 100/128/140/145/
+* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 78 checks (v3: spectrum band accuracy, waveform; v2: kick 25/25, snare 25/25, hat 100/100, 0 false snares, one drop at the right moment): BPM detection at 100/128/140/145/
   150/174 BPM within ±0.5 BPM, beat-phase error ≤ 0.063 beat, level-independent AGC, stereo metrics,
   modulation curves/attack/release/polarity, image DNA on a 4000×3000 image in ~180 ms.
 
