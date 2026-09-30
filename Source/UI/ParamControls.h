@@ -18,6 +18,7 @@ class ParamKnob : public juce::Component, private juce::Timer
 public:
     ParamKnob(DaliVisualProcessor& p, const juce::String& paramId, const juce::String& labelText = {});
     void setLabel(const juce::String& t) { label.setText(t, juce::dontSendNotification); }
+    void setTooltip(const juce::String& t) { slider.setTooltip(t + "\n\nRight-click: MIDI Learn / Modulate / Reset"); }
     void resized() override;
     juce::String getParamId() const { return paramId; }
 

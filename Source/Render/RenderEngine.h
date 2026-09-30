@@ -22,6 +22,7 @@
 #include "ColorSystem.h"
 #include "VisualEffect.h"
 #include "VisualScene.h"
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -47,6 +48,7 @@ private:
     {
         float bass = 0, mid = 0, high = 0, energy = 0, kick = 0, transient = 0, onset = 0;
         float centroid = 0, flux = 0, width = 0, pan = 0, stereoEnergy = 0, rms = 0, peak = 0;
+        float snare = 0, hat = 0, build = 0, drop = 0;
     };
 
     float effective(int index) const noexcept;       // real value including modulation
@@ -61,6 +63,7 @@ private:
     void drawFullscreen();
     static void bindTexture(int unit, unsigned int tex);
     void publishTelemetry(double now);
+    void updateAutoPilot(float dt);
 
     EngineState& state;
     juce::OpenGLContext& context;
@@ -88,6 +91,16 @@ private:
     double lastTime = 0.0, startTime = 0.0;
     double sceneTime = 0.0, templateMotion = 0.0;
     AudioUniforms au;
+    float activity = 0.0f;                 // smoothed 'music is playing' gate (0 = frozen)
+    std::uint32_t dropCount = 0;
+
+    // Auto Pilot: phrase-based variations (deterministic per phrase, so preview and
+    // fullscreen output engines vary identically)
+    static constexpr int kAutoTargets = 5;  // macro A-D, colour shift
+    std::array<float, kAutoTargets> autoCurrent {}, autoTarget {};
+    std::int64_t autoKey = -1;
+    std::uint32_t autoDropsSeen = 0, autoLastDrop = 0;
+    int autoTargetIndex[kAutoTargets] {};
     MusicalClock clock;
     ColorSystem color;
 
@@ -107,7 +120,7 @@ private:
     int pScene, pIntensity, pSpeed, pMacro[4], pSensitivity, pSmoothing, pReact[4], pSyncSource, pSyncDiv,
         pInternalBpm, pPalette, pHue, pSat, pBright, pContrast, pColorAmount, pColorShift, pAudioColor,
         pCustomA, pCustomB, pTplEnable, pTplMode, pTplBlend, pTplMix, pTplMirror, pTplKaleido,
-        pTplRotation, pTplMotion;
+        pTplRotation, pTplMotion, pAudioDrive, pIdleMotion, pDynamics, pAutoPilot, pAutoBars, pAutoOnDrop;
     std::vector<std::pair<const char*, int>> tplUniforms;   // uniform name → param index
     std::vector<int> pFxOn, pFxAmt, pFxP2;
 

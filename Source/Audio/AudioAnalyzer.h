@@ -1,10 +1,15 @@
 #pragma once
 // ============================================================================
-//  AudioAnalyzer — bridges the audio thread and the analysis DSP.
+//  AudioAnalyzer — bridges audio producers and the analysis DSP.
 //
-//  Audio thread:    push()     → wait-free SPSC ring (never blocks / allocates)
-//  Analysis thread: run()      → FeatureExtractor per 512-sample hop
-//  Any thread:      snapshot() → latest AudioFeatures + time stamp
+//  Two independent wait-free SPSC rings, one per producer:
+//    Host      audio thread (plug-in input / standalone input device)
+//    External  system-audio loopback thread (standalone, Windows WASAPI)
+//  The analysis thread consumes whichever source is selected and discards the
+//  other, so the two producers never share a queue.
+//
+//  Any thread: snapshot() → latest AudioFeatures + publication time stamp
+//  (a stale stamp means no audio is arriving at all).
 // ============================================================================
 #include <juce_core/juce_core.h>
 #include "FeatureExtractor.h"
@@ -16,6 +21,8 @@ namespace dali
 class AudioAnalyzer : private juce::Thread
 {
 public:
+    enum class Source { Host = 0, External = 1 };
+
     struct Snapshot
     {
         AudioFeatures features;
@@ -25,13 +32,17 @@ public:
     AudioAnalyzer();
     ~AudioAnalyzer() override;
 
-    /** Setup thread. Safe to call while running. */
-    void prepare(double sampleRate);
-    /** Any thread (atomic). */
+    /** Setup threads. Safe to call while running. */
+    void prepare(double hostSampleRate);
+    void setExternalSampleRate(double sr);
+    void setSource(Source s) noexcept { source.store(int(s)); }
+    Source getSource() const noexcept { return Source(source.load()); }
     void setSensitivity(float s) noexcept { sensitivity.store(s); }
 
-    /** Audio thread. Wait-free. 'right' may be nullptr (mono). */
+    /** Host audio thread. Wait-free. 'right' may be nullptr (mono). */
     void push(const float* left, const float* right, int numSamples) noexcept;
+    /** Loopback thread. Wait-free. */
+    void pushExternal(const float* left, const float* right, int numSamples) noexcept;
 
     /** Any non-audio thread. */
     Snapshot snapshot() const;
@@ -40,12 +51,15 @@ public:
 
 private:
     struct Frame { float l, r; };
+    static void pushInto(SpscRing<Frame>& ring, const float* left, const float* right, int n) noexcept;
     void run() override;
 
-    SpscRing<Frame> ring { 1u << 16 };
+    SpscRing<Frame> hostRing { 1u << 16 }, extRing { 1u << 16 };
     FeatureExtractor extractor;
-    std::atomic<double> pendingRate { 0.0 };
-    std::atomic<float>  sensitivity { 1.0f };
+    std::atomic<double> hostRate { 48000.0 }, extRate { 48000.0 };
+    std::atomic<int> rateVersion { 0 };
+    std::atomic<int> source { int(Source::Host) };
+    std::atomic<float> sensitivity { 1.0f };
 
     mutable juce::SpinLock lock;
     Snapshot latest;

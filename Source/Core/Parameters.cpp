@@ -37,6 +37,12 @@ std::vector<Def> build()
     F(id::macroB, "Macro B", 0.0f, 1.0f, 0.5f, true, "Scene");
     F(id::macroC, "Macro C", 0.0f, 1.0f, 0.5f, true, "Scene");
     F(id::macroD, "Macro D", 0.0f, 1.0f, 0.5f, true, "Scene");
+    F(id::audioDrive, "Audio Drive", 0.0f, 1.0f, 0.7f, true, "Scene");
+    F(id::idleMotion, "Idle Motion", 0.0f, 1.0f, 0.0f, false, "Scene");
+    F(id::dynamics, "Musical Dynamics", 0.0f, 1.0f, 0.6f, true, "Scene");
+    C(id::autoPilot, "Auto Pilot", { "Off", "Variations", "Variations + Scenes" }, 0, "Scene");
+    C(id::autoBars, "Auto Pilot Every", { "2 bars", "4 bars", "8 bars", "16 bars", "32 bars" }, 2, "Scene");
+    B(id::autoOnDrop, "Auto Pilot On Drop", true, "Scene");
 
     // --- audio reaction ------------------------------------------------------
     F(id::sensitivity, "Sensitivity", 0.0f, 2.0f, 1.0f, false, "Audio", "x");

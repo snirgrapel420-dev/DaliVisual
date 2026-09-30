@@ -52,10 +52,53 @@ private:
     bool kiosk;
 };
 
+class OutputManager::IdentifyWindow : public juce::Component
+{
+public:
+    IdentifyWindow(int number, const juce::String& info, const juce::Rectangle<int>& displayArea)
+        : text(juce::String(number)), sub(info)
+    {
+        setOpaque(false);
+        const int size = juce::jmin(420, juce::jmin(displayArea.getWidth(), displayArea.getHeight()) / 2);
+        setBounds(juce::Rectangle<int>(size, size).withCentre(displayArea.getCentre()));
+        addToDesktop(juce::ComponentPeer::windowIsTemporary);
+        setAlwaysOnTop(true);
+        setVisible(true);
+    }
+    void paint(juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour(juce::Colour(0xee0b0a10));
+        g.fillRoundedRectangle(r, 28.0f);
+        g.setColour(juce::Colour(0xffb24dff));
+        g.drawRoundedRectangle(r.reduced(3.0f), 26.0f, 6.0f);
+        g.setFont(juce::Font(juce::FontOptions(r.getHeight() * 0.55f, juce::Font::bold)));
+        g.drawText(text, r.withTrimmedBottom(r.getHeight() * 0.18f), juce::Justification::centred);
+        g.setColour(juce::Colours::white.withAlpha(0.8f));
+        g.setFont(juce::Font(juce::FontOptions(juce::jmax(12.0f, r.getHeight() * 0.06f))));
+        g.drawText(sub, r.removeFromBottom(r.getHeight() * 0.22f), juce::Justification::centred);
+    }
+private:
+    juce::String text, sub;
+};
+
 OutputManager::OutputManager(EngineState& s) : state(s) {}
+
+void OutputManager::identifyDisplays()
+{
+    identifyWindows.clear();
+    for (auto& d : getDisplays())
+        identifyWindows.add(new IdentifyWindow(d.index + 1, d.name.fromFirstOccurrenceOf("  ", false, false).trim(), d.area));
+    juce::Component::SafePointer<juce::Component> first(identifyWindows.isEmpty() ? nullptr : identifyWindows.getFirst());
+    juce::Timer::callAfterDelay(2500, [this, first]
+    {
+        if (first != nullptr) identifyWindows.clear();       // only if this batch is still showing
+    });
+}
 
 OutputManager::~OutputManager()
 {
+    identifyWindows.clear();
     window.reset();
     state.telemetry.outputActive = false;
 }
@@ -68,9 +111,9 @@ juce::Array<OutputManager::DisplayInfo> OutputManager::getDisplays()
     {
         const auto& d = displays.getReference(i);
         const auto r = d.totalArea;
-        result.add({ i, "Display " + juce::String(i + 1) + (d.isMain ? " (main)" : "") + "  "
+        result.add({ i, "Display " + juce::String(i + 1) + "  "
                         + juce::String(juce::roundToInt(r.getWidth() * d.scale)) + " x "
-                        + juce::String(juce::roundToInt(r.getHeight() * d.scale)),
+                        + juce::String(juce::roundToInt(r.getHeight() * d.scale)) + (d.isMain ? "  (main)" : ""),
                      r, d.isMain });
     }
     return result;

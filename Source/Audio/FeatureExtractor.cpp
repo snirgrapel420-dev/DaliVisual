@@ -50,9 +50,12 @@ void FeatureExtractor::prepare(double sampleRate)
     auto bin = [&](double hz) { return std::clamp(int(std::lround(hz / binHz)), 1, fftSize / 2); };
     binLowA = bin(25); binLowB = bin(160); binKickA = bin(38); binKickB = bin(125);
     binMidB = bin(2500); binHighB = bin(std::min(16000.0, sr * 0.45));
+    binSnareA = bin(180); binSnareB = bin(4000); binHatA = std::min(bin(7000), binHighB - 1);
 
     kickDet.prepare(int(hopRate * 1.0));
     onsetDet.prepare(int(hopRate * 0.8));
+    snareDet.prepare(int(hopRate * 0.8));
+    hatDet.prepare(int(hopRate * 0.5));
     beat.prepare(hopRate);
     reset();
 }
@@ -62,8 +65,10 @@ void FeatureExtractor::reset()
     std::fill(ringL.begin(), ringL.end(), 0.0f); std::fill(ringR.begin(), ringR.end(), 0.0f);
     std::fill(prevLogMag.begin(), prevLogMag.end(), 0.0f);
     agcRms = agcLow = agcMid = agcHigh = agcSide = Agc {};
-    fluxRef = 1e-3; fastDb = slowDb = prevKickDb = kickAvg = -100;
+    fluxRef = hatRef = 1e-3; fastDb = slowDb = prevKickDb = kickAvg = -100;
+    sinceKick = 0.0; sinceDrop = 100.0; snAvg = -100; kickPeak = -70.0;
     kickDet.prepare(int(hopRate * 1.0)); onsetDet.prepare(int(hopRate * 0.8));
+    snareDet.prepare(int(hopRate * 0.8)); hatDet.prepare(int(hopRate * 0.5));
     beat.reset();
     f = AudioFeatures {};
     silentHops = 0;
@@ -129,14 +134,19 @@ void FeatureExtractor::processHop(const float* left, const float* right)
     f.centroid = follow(f.centroid, cNow, coef(0.05, hopRate), coef(0.25, hopRate));
 
     // spectral flux (half-wave rectified log-magnitude difference)
-    double flux = 0;
+    double flux = 0, hatFlux = 0;
     for (int k = binLowA; k < binHighB; ++k)
     {
         const float lm = std::log1p(1000.0f * mag[size_t(k)]);
-        flux += std::max(0.0f, lm - prevLogMag[size_t(k)]);
+        const float d = std::max(0.0f, lm - prevLogMag[size_t(k)]);
+        flux += d;
+        if (k >= binHatA) hatFlux += d;
         prevLogMag[size_t(k)] = lm;
     }
     flux /= std::max(1, binHighB - binLowA);
+    hatFlux /= std::max(1, binHighB - binHatA);
+    hatRef = std::max(hatFlux, hatRef * 0.9995);
+    const float hatN = f.silent ? 0.0f : clamp01(float(hatFlux / std::max(hatRef, 1e-4)));
     fluxRef = std::max(flux, fluxRef * 0.9995);
     const float fluxN = f.silent ? 0.0f : clamp01(float(flux / std::max(fluxRef, 1e-4)));
     f.flux = follow(f.flux, shape(fluxN), coef(0.004, hopRate), coef(0.12, hopRate));
@@ -144,9 +154,59 @@ void FeatureExtractor::processHop(const float* left, const float* right)
     // ---- kick: rise in the kick band against its short-term average -----------
     const float kickOdf = float(std::max(0.0, kickDb - kickAvg)) / 12.0f;
     kickAvg = kickAvg < -99 ? kickDb : kickAvg + (kickDb - kickAvg) * 0.25;
-    const bool kickHit = !f.silent && kickDet.process(kickOdf, 1.6f, int(hopRate * 0.09)) && f.low > 0.35f;
+    // kick-band peak memory (instant attack, 0.5 dB/s release): a kick must reach
+    // within 12 dB of recent kicks, so noise/risers in a breakdown are not kicks
+    kickPeak = kickDb > kickPeak ? kickDb : std::max(-70.0, kickPeak - 0.5 / hopRate);
+    const bool kickStrong = kickDb > kickPeak - 12.0;
+    // gate the *input* (not the result): a rejected candidate must not start the refractory period
+    const bool kickHit = !f.silent && kickDet.process((f.low > 0.3f && kickStrong) ? kickOdf : 0.0f, 1.6f, int(hopRate * 0.09));
     if (kickHit) { f.kick = 1.0f; ++f.kickCount; }
     else f.kick *= 1.0f - coef(0.13, hopRate);
+
+    // ---- snare / clap: mid-band noise burst that is not just the kick's click ----
+    //      (level rise in 180 Hz-4 kHz, weighted by spectral flatness: noise is flat,
+    //       a side-chained bass or synth swelling back in is harmonic → rejected)
+    const double snDb = toDb(bandRms(binSnareA, binSnareB));
+    const float snRise = float(std::max(0.0, snDb - snAvg)) / 12.0f;
+    snAvg = snAvg < -99 ? snDb : snAvg + (snDb - snAvg) * 0.25;
+    double logSum = 0, linSum = 0;
+    for (int k = binSnareA; k < binSnareB; ++k) { logSum += std::log(double(mag[size_t(k)]) + 1e-12); linSum += mag[size_t(k)]; }
+    const int nSn = std::max(1, binSnareB - binSnareA);
+    const float flat = linSum > 1e-12 ? float(std::exp(logSum / nSn) / (linSum / nSn)) : 0.0f;
+    const float noisy = clamp01((flat - 0.62f) / 0.15f);
+    const float snOdf = snRise * noisy * (1.0f - 0.8f * std::min(1.0f, kickOdf * 1.5f));
+    // adaptive threshold (relative to recent history) AND an absolute one: periodic
+    // non-snare events must not become 'snares' just because they repeat
+    const bool snareHit = !f.silent && snareDet.process((f.mid > 0.25f && !kickHit) ? snOdf : 0.0f, 1.8f, int(hopRate * 0.12))
+                          && snOdf > 0.3f;
+    if (snareHit) { f.snare = 1.0f; ++f.snareCount; }
+    else f.snare *= 1.0f - coef(0.15, hopRate);
+
+    // ---- hi-hat: high-band flux hits ----------------------------------------------
+    const bool hatHit = !f.silent && hatDet.process(f.high > 0.25f ? hatN : 0.0f, 1.4f, int(hopRate * 0.05));
+    if (hatHit) { f.hat = 1.0f; ++f.hatCount; }
+    else f.hat *= 1.0f - coef(0.06, hopRate);
+
+    // ---- musical structure: build (no kick for a while) and drop (kick returns) --
+    const double hopSec = hopSize / sr;
+    if (!f.silent)
+    {
+        sinceDrop += hopSec;
+        if (kickHit)
+        {
+            if (sinceKick >= 4.0 && sinceDrop > 8.0) { f.drop = 1.0f; ++f.dropCount; sinceDrop = 0.0; }
+            sinceKick = 0.0;
+        }
+        else sinceKick += hopSec;
+    }
+    // ramps up from 1.5 s to 9 s without a kick, fades out again for very long kick-less passages (ambient)
+    const double ramp = std::clamp((sinceKick - 1.5) / 7.5, 0.0, 1.0) * std::clamp((40.0 - sinceKick) / 16.0, 0.0, 1.0);
+    const float buildTarget = f.silent ? 0.0f : float(ramp) * (0.45f + 0.55f * f.energy);
+    f.build = follow(f.build, buildTarget, coef(0.6, hopRate), coef(sinceKick < 0.5 ? 0.08 : 0.8, hopRate));
+    f.drop *= 1.0f - coef(1.5, hopRate);
+
+    // ---- activity gate: 1 while music plays, 0 in silence (drives motion) ----------
+    f.activity = follow(f.activity, f.silent ? 0.0f : 1.0f, coef(0.12, hopRate), coef(0.5, hopRate));
 
     // ---- onset (broadband flux) -------------------------------------------------
     const bool onsetHit = !f.silent && onsetDet.process(fluxN, 1.4f, int(hopRate * 0.06));

@@ -105,9 +105,10 @@ void DaliLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& b, c
     using namespace colours;
     auto r = b.getLocalBounds().toFloat().reduced(0.5f);
     const bool on = b.getToggleState();
-    g.setColour(on ? accent.withAlpha(0.85f) : panel2.brighter(over ? 0.12f : 0.0f).darker(down ? 0.2f : 0.0f));
+    const juce::Colour onColour = b.findColour(juce::TextButton::buttonOnColourId);
+    g.setColour(on ? onColour : panel2.brighter(over ? 0.12f : 0.0f).darker(down ? 0.2f : 0.0f));
     g.fillRoundedRectangle(r, 5.0f);
-    g.setColour(on ? accent.brighter(0.3f) : outline);
+    g.setColour(on ? onColour.brighter(0.3f) : outline);
     g.drawRoundedRectangle(r, 5.0f, 1.0f);
 }
 

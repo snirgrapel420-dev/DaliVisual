@@ -42,6 +42,8 @@ namespace id
 {
     inline const juce::String scene = "scene", intensity = "intensity", speed = "speed",
         macroA = "macroA", macroB = "macroB", macroC = "macroC", macroD = "macroD",
+        audioDrive = "audioDrive", idleMotion = "idleMotion", dynamics = "dynamics",
+        autoPilot = "autoPilot", autoBars = "autoBars", autoOnDrop = "autoOnDrop",
         sensitivity = "sensitivity", smoothing = "smoothing",
         reactBass = "reactBass", reactMid = "reactMid", reactHigh = "reactHigh", reactTransient = "reactTransient",
         syncSource = "syncSource", syncDiv = "syncDiv", internalBpm = "internalBpm",

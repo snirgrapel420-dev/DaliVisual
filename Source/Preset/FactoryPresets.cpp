@@ -47,9 +47,9 @@ juce::ValueTree makeState(const Def& d)
     return st;
 }
 
-   juce::String on(const char* fx)  { return params::id::fxOn(fx); }
-   juce::String amt(const char* fx) { return params::id::fxAmt(fx); }
-   juce::String p2(const char* fx)  { return params::id::fxP2(fx); }
+juce::String on(const char* fx)  { return params::id::fxOn(fx); }
+juce::String amt(const char* fx) { return params::id::fxAmt(fx); }
+juce::String p2(const char* fx)  { return params::id::fxP2(fx); }
 }
 
 std::vector<Preset> createFactoryPresets()
@@ -62,7 +62,8 @@ std::vector<Preset> createFactoryPresets()
           { { scene, 0 }, { palette, 7 }, { macroA, 0.55f }, { macroB, 0.6f }, { macroC, 0.7f }, { macroD, 0.55f },
             { on("glow"), 1 }, { amt("glow"), 0.35f }, { on("chromatic"), 1 }, { amt("chromatic"), 0.15f } },
           { { ModSource::Kick, "intensity", 0.2f, 0, 120 }, { ModSource::Bass, "macroB", 0.2f },
-            { ModSource::Transient, "fx_chromatic_amt", 0.6f, 0, 200 }, { ModSource::High, "fx_glow_amt", 0.3f } } },
+            { ModSource::Snare, "fx_chromatic_amt", 0.6f, 0, 200 }, { ModSource::HiHat, "fx_glow_amt", 0.25f, 0, 80 },
+            { ModSource::Drop, "macroD", 0.4f, 0, 400 } } },
 
         { "02 Organic Flux - Deep Breath",
           { { scene, 1 }, { palette, 2 }, { macroA, 0.45f }, { macroD, 0.35f },
@@ -73,8 +74,8 @@ std::vector<Preset> createFactoryPresets()
         { "03 Infinite Tunnel - Hyperdrive",
           { { scene, 2 }, { palette, 4 }, { macroA, 0.3f }, { macroB, 0.6f }, { macroC, 0.65f }, { macroD, 0.6f },
             { on("trails"), 1 }, { amt("trails"), 0.55f }, { on("rgbsplit"), 1 }, { amt("rgbsplit"), 0.1f } },
-          { { ModSource::Energy, "macroC", 0.25f, 50, 400 }, { ModSource::Transient, "fx_rgbsplit_amt", 0.5f, 0, 180 },
-            { ModSource::Kick, "macroA", 0.2f, 0, 150 } } },
+          { { ModSource::Energy, "macroC", 0.25f, 50, 400 }, { ModSource::Snare, "fx_rgbsplit_amt", 0.5f, 0, 180 },
+            { ModSource::Kick, "macroA", 0.2f, 0, 150 }, { ModSource::Build, "macroC", -0.35f, 200, 300 } } },
 
         { "04 Fractal Temple - Sacred Geometry",
           { { scene, 3 }, { palette, 2 }, { macroA, 0.4f }, { macroB, 0.6f }, { macroD, 0.45f }, { syncDiv, 2 },
@@ -86,7 +87,7 @@ std::vector<Preset> createFactoryPresets()
           { { scene, 4 }, { palette, 1 }, { macroA, 0.5f }, { macroB, 0.7f }, { macroC, 0.8f }, { macroD, 0.6f },
             { on("rgbsplit"), 1 }, { amt("rgbsplit"), 0.12f }, { on("noise"), 1 }, { amt("noise"), 0.12f } },
           { { ModSource::Centroid, "macroB", 0.35f, 20, 200 }, { ModSource::Kick, "fx_rgbsplit_amt", 0.5f, 0, 120 },
-            { ModSource::Beat, "brightness", 0.12f, 0, 150 } } },
+            { ModSource::Beat, "brightness", 0.12f, 0, 150 }, { ModSource::HiHat, "fx_noise_amt", 0.3f, 0, 60 } } },
 
         { "06 Liquid Dream - Mercury",
           { { scene, 5 }, { palette, 5 }, { macroB, 0.55f }, { macroD, 0.45f },
@@ -96,7 +97,8 @@ std::vector<Preset> createFactoryPresets()
         { "07 Neural Bloom - Synapse Fire",
           { { scene, 6 }, { palette, 2 }, { macroA, 0.45f }, { macroB, 0.6f },
             { on("glow"), 1 }, { amt("glow"), 0.55f }, { p2("glow"), 0.2f }, { on("trails"), 1 }, { amt("trails"), 0.45f } },
-          { { ModSource::Transient, "macroD", 0.5f, 0, 250 }, { ModSource::Bass, "macroC", 0.3f } } },
+          { { ModSource::Snare, "macroD", 0.5f, 0, 250 }, { ModSource::Bass, "macroC", 0.3f },
+            { ModSource::HiHat, "fx_glow_amt", 0.2f, 0, 60 } } },
 
         { "08 Psychedelic Void - Event Horizon",
           { { scene, 7 }, { palette, 7 }, { macroA, 0.6f }, { macroB, 0.7f }, { macroD, 0.5f },
@@ -117,6 +119,20 @@ std::vector<Preset> createFactoryPresets()
           { { scene, 0 }, { palette, 0 }, { macroA, 0.35f }, { macroB, 0.75f }, { macroD, 0.3f },
             { on("glow"), 1 }, { amt("glow"), 0.3f }, { on("noise"), 1 }, { amt("noise"), 0.1f } },
           { { ModSource::Kick, "intensity", 0.25f, 0, 150 } } },
+
+        { "13 Festival - Build and Drop",
+          { { scene, 0 }, { palette, 7 }, { dynamics, 0.95f }, { audioDrive, 0.85f }, { macroA, 0.6f }, { macroB, 0.65f },
+            { on("glow"), 1 }, { amt("glow"), 0.45f }, { on("rgbsplit"), 1 }, { amt("rgbsplit"), 0.08f },
+            { on("feedback"), 1 }, { amt("feedback"), 0.35f } },
+          { { ModSource::Kick, "intensity", 0.25f, 0, 120 }, { ModSource::Snare, "fx_rgbsplit_amt", 0.5f, 0, 160 },
+            { ModSource::Build, "macroB", 0.4f, 300, 200 }, { ModSource::Build, "fx_feedback_amt", 0.4f, 300, 150 },
+            { ModSource::Drop, "fx_glow_amt", 0.5f, 0, 900 }, { ModSource::HiHat, "fx_noise_amt", 0.15f, 0, 50 } } },
+
+        { "14 Auto Pilot - Journey",
+          { { scene, 3 }, { palette, 2 }, { autoPilot, 2 }, { autoBars, 2 }, { autoOnDrop, 1 }, { dynamics, 0.75f },
+            { on("glow"), 1 }, { amt("glow"), 0.35f }, { on("vignette"), 1 }, { amt("vignette"), 0.45f } },
+          { { ModSource::Kick, "intensity", 0.2f, 0, 120 }, { ModSource::Snare, "macroD", 0.3f, 0, 200 },
+            { ModSource::Bass, "macroA", 0.2f, 10, 250 }, { ModSource::Centroid, "colorShift", 0.15f, 60, 500 } } },
 
         { "12 Red Black - Ritual",
           { { scene, 3 }, { palette, 3 }, { macroA, 0.7f }, { macroB, 0.8f }, { macroC, 0.3f },

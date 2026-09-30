@@ -1,15 +1,41 @@
 #pragma once
 // ============================================================================
-//  Editor chrome: HeaderBar (logo, scene, presets, fullscreen, settings),
-//  MeterBar (Bass · Mid · High · Energy · Beat · BPM · FPS · CPU) and the
-//  SettingsPanel overlay (output display, resolution, v-sync, MIDI).
+//  Editor chrome
+//   HeaderBar      logo · scene · preset · audio source · output display +
+//                  identify + GO LIVE · panel toggle · settings
+//   MeterBar       Bass · Mid · High · Energy · Kick/Snare/Hat · Build · BPM ·
+//                  FPS · CPU · signal status
+//   SettingsWindow a real top-level window (the OpenGL preview is a native
+//                  child window on Windows, so nothing may be drawn over it)
 // ============================================================================
 #include "ParamControls.h"
 #include "DaliLookAndFeel.h"
 
 namespace dali
 {
-class HeaderBar : public juce::Component, private juce::ChangeListener
+/** Output-display chooser, shared by the header and the settings window. */
+class DisplayCombo : public juce::ComboBox, private juce::Timer
+{
+public:
+    explicit DisplayCombo(DaliVisualProcessor& p);
+    void refresh();
+private:
+    void timerCallback() override;
+    DaliVisualProcessor& proc;
+    int lastCount = -1;
+};
+
+/** Audio source chooser (standalone). */
+class SourceCombo : public juce::ComboBox, private juce::Timer
+{
+public:
+    explicit SourceCombo(DaliVisualProcessor& p);
+private:
+    void timerCallback() override;
+    DaliVisualProcessor& proc;
+};
+
+class HeaderBar : public juce::Component, private juce::ChangeListener, private juce::Timer
 {
 public:
     explicit HeaderBar(DaliVisualProcessor& p);
@@ -17,22 +43,26 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
-    std::function<void()> onSettings;
+    std::function<void()> onSettings, onTogglePanel;
+    void setPanelVisible(bool v) { panelBtn.setToggleState(v, juce::dontSendNotification); }
 
 private:
-    void changeListenerCallback(juce::ChangeBroadcaster*) override { refreshPresets(); updateFullscreenButton(); }
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { refreshPresets(); updateLiveButton(); }
+    void timerCallback() override { updateLiveButton(); }
     void refreshPresets();
-    void updateFullscreenButton();
+    void updateLiveButton();
     void showPresetMenu();
-    void showFullscreenMenu();
     void askName(const juce::String& title, const juce::String& initial, std::function<void(juce::String)> done);
 
     DaliVisualProcessor& proc;
     ParamCombo scene;
     juce::ComboBox preset;
-    juce::TextButton prev { "<" }, next { ">" }, presetMenu { "PRESET" }, fullscreen { "FULLSCREEN" },
-                     displayMenu { juce::String::fromUTF8("\xe2\x96\xbe") }, settings { "SETTINGS" };
-    juce::Label sceneLabel, presetLabel;
+    SourceCombo source;
+    DisplayCombo display;
+    juce::TextButton prev { "<" }, next { ">" }, presetMenu { "..." }, identify { "ID" },
+                     live { "GO LIVE" }, panelBtn { "PANEL" }, settings { "SETTINGS" };
+    struct Caption { juce::String text; juce::Rectangle<int> area; };
+    juce::Array<Caption> captions;
 };
 
 class MeterBar : public juce::Component, private juce::Timer
@@ -43,10 +73,10 @@ public:
 private:
     void timerCallback() override;
     DaliVisualProcessor& proc;
-    float bass = 0, mid = 0, high = 0, energy = 0, beat = 0;
-    float bpm = 0, fps = 0, outFps = 0, cpu = 0, frameMs = 0;
+    float bass = 0, mid = 0, high = 0, energy = 0, kick = 0, snare = 0, hat = 0, build = 0, drop = 0;
+    float bpm = 0, fps = 0, outFps = 0, cpu = 0, frameMs = 0, activity = 0;
     int source = 2;
-    bool output = false, silent = true;
+    bool output = false;
 };
 
 class SettingsPanel : public juce::Component, private juce::Timer
@@ -55,20 +85,29 @@ public:
     explicit SettingsPanel(DaliVisualProcessor& p);
     void paint(juce::Graphics&) override;
     void resized() override;
-    void visibilityChanged() override { if (isVisible()) refresh(); }
-    std::function<void()> onClose;
+    void refresh();
 private:
     void timerCallback() override;
-    void refresh();
     DaliVisualProcessor& proc;
-    SectionLabel outHeader { "Output" }, midiHeader { "MIDI" }, infoHeader { "System" };
-    juce::ComboBox display, resolution;
-    juce::Label displayLabel, resolutionLabel, midiLast, info;
-    juce::ToggleButton vsync { "V-Sync (locks to the display: 60 / 120 Hz)" },
-                       previewWhileOutput { "Keep preview running while fullscreen" },
+    SectionLabel outHeader { "Fullscreen Output" }, audioHeader { "Audio Source" }, midiHeader { "MIDI" },
+                 infoHeader { "System" };
+    DisplayCombo display;
+    SourceCombo source;
+    juce::ComboBox resolution;
+    juce::Label displayLabel, resolutionLabel, sourceLabel, sourceStatus, midiLast, info;
+    juce::ToggleButton vsync { "V-Sync (lock to the display refresh rate)" },
+                       previewWhileOutput { "Keep the preview running while live" },
                        noteScenes { "Notes C1-G1 select scenes 1-8" },
                        programScenes { "Program Change selects scenes" };
-    juce::TextButton openOutput { "Open Fullscreen Output" }, clearMidi { "Clear all MIDI mappings" },
-                     factory { "Reinstall factory presets" }, close { "Close" };
+    juce::TextButton identify { "Identify Displays" }, openOutput { "GO LIVE" },
+                     clearMidi { "Clear all MIDI mappings" }, factory { "Reinstall factory presets" };
+};
+
+class SettingsWindow : public juce::DocumentWindow
+{
+public:
+    SettingsWindow(DaliVisualProcessor& p, juce::LookAndFeel& lnf, juce::Component* centreOn);
+    void closeButtonPressed() override { setVisible(false); }
+    void show(juce::Component* centreOn);
 };
 } // namespace dali

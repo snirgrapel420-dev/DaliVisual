@@ -12,12 +12,19 @@ AudioAnalyzer::~AudioAnalyzer()
     stopThread(2000);
 }
 
-void AudioAnalyzer::prepare(double sampleRate)
+void AudioAnalyzer::prepare(double hostSampleRate)
 {
-    pendingRate.store(sampleRate);            // applied by the analysis thread
+    if (hostSampleRate > 0) hostRate.store(hostSampleRate);
+    ++rateVersion;
 }
 
-void AudioAnalyzer::push(const float* left, const float* right, int numSamples) noexcept
+void AudioAnalyzer::setExternalSampleRate(double sr)
+{
+    if (sr > 0) extRate.store(sr);
+    ++rateVersion;
+}
+
+void AudioAnalyzer::pushInto(SpscRing<Frame>& ring, const float* left, const float* right, int numSamples) noexcept
 {
     Frame tmp[256];
     int pos = 0;
@@ -30,6 +37,9 @@ void AudioAnalyzer::push(const float* left, const float* right, int numSamples) 
     }
 }
 
+void AudioAnalyzer::push(const float* l, const float* r, int n) noexcept         { pushInto(hostRing, l, r, n); }
+void AudioAnalyzer::pushExternal(const float* l, const float* r, int n) noexcept { pushInto(extRing, l, r, n); }
+
 AudioAnalyzer::Snapshot AudioAnalyzer::snapshot() const
 {
     const juce::SpinLock::ScopedLockType sl(lock);
@@ -41,11 +51,22 @@ void AudioAnalyzer::run()
     constexpr int H = FeatureExtractor::hopSize;
     Frame frames[H];
     float L[H], R[H];
+    int seenRateVersion = -1, activeSource = -1;
 
     while (!threadShouldExit())
     {
-        const double rate = pendingRate.exchange(0.0);
-        if (rate > 0.0) extractor.prepare(rate);
+        const int src = source.load();
+        const int rv = rateVersion.load();
+        if (src != activeSource || rv != seenRateVersion)
+        {
+            activeSource = src;
+            seenRateVersion = rv;
+            extractor.prepare(src == int(Source::External) ? extRate.load() : hostRate.load());
+        }
+
+        auto& ring  = src == int(Source::External) ? extRing : hostRing;
+        auto& other = src == int(Source::External) ? hostRing : extRing;
+        other.clear();                                  // consumer-side: discard the unused source
 
         bool worked = false;
         while (ring.available() >= size_t(H) && !threadShouldExit())

@@ -1,6 +1,7 @@
 #include "Panels.h"
 #include "../Render/Library.h"
 #include "../Render/Palettes.h"
+#include "BinaryData.h"
 
 namespace dali
 {
@@ -19,21 +20,65 @@ juce::Label& styleSmall(juce::Label& l, bool dim = true)
 // =============================================================================
 //  SCENE
 // =============================================================================
+class ScenePanel::SceneTile : public juce::Button
+{
+public:
+    SceneTile(int idx) : juce::Button(sceneLibrary()[size_t(idx)].name), index(idx)
+    {
+        int size = 0;
+        const juce::String res = "thumb_" + juce::String(idx + 1).paddedLeft('0', 2) + "_jpg";
+        if (const char* data = BinaryData::getNamedResource(res.toRawUTF8(), size))
+            thumb = juce::ImageFileFormat::loadFrom(data, size_t(size));
+        setTooltip(juce::String(sceneLibrary()[size_t(idx)].description) + "\n(key " + juce::String(idx + 1) + ")");
+    }
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced(2.0f);
+        juce::Path clip; clip.addRoundedRectangle(r, 7.0f);
+        g.saveState();
+        g.reduceClipRegion(clip);
+        if (thumb.isValid()) g.drawImage(thumb, r, juce::RectanglePlacement::fillDestination);
+        else { g.setColour(colours::panel2); g.fillRect(r); }
+        g.setGradientFill(juce::ColourGradient(juce::Colours::transparentBlack, 0.0f, r.getBottom() - 34.0f,
+                                               juce::Colours::black.withAlpha(0.85f), 0.0f, r.getBottom(), false));
+        g.fillRect(r);
+        if (!getToggleState()) { g.setColour(juce::Colours::black.withAlpha(over ? 0.12f : 0.32f)); g.fillRect(r); }
+        g.restoreState();
+
+        const bool on = getToggleState();
+        g.setColour(on ? colours::accent : (over ? colours::outline.brighter(0.4f) : colours::outline));
+        g.drawRoundedRectangle(r, 7.0f, on ? 2.5f : 1.0f);
+        g.setColour(on ? juce::Colours::white : colours::text.withAlpha(0.85f));
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawFittedText(getName().fromFirstOccurrenceOf("  ", false, false).trim(),
+                         r.removeFromBottom(22.0f).reduced(8.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+        g.setColour(on ? colours::accent : colours::textDim);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText(juce::String(index + 1), r.reduced(8.0f, 6.0f).toNearestInt(), juce::Justification::topLeft);
+        juce::ignoreUnused(down);
+    }
+private:
+    const int index;
+    juce::Image thumb;
+};
+
 ScenePanel::ScenePanel(DaliVisualProcessor& p)
     : proc(p),
       macroA(p, params::id::macroA), macroB(p, params::id::macroB), macroC(p, params::id::macroC), macroD(p, params::id::macroD),
-      intensity(p, params::id::intensity, "Intensity"), speed(p, params::id::speed, "Motion")
+      intensity(p, params::id::intensity, "Intensity"), speed(p, params::id::speed, "Motion"),
+      drive(p, params::id::audioDrive, "Audio Drive"), idle(p, params::id::idleMotion, "Idle Motion"),
+      dynamics(p, params::id::dynamics, "Build / Drop"),
+      autoMode(p, params::id::autoPilot), autoBars(p, params::id::autoBars), autoOnDrop(p, params::id::autoOnDrop, "Change on drop")
 {
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &sceneHeader, &macroHeader, &globalHeader, &description,
-                     &macroA, &macroB, &macroC, &macroD, &intensity, &speed })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &sceneHeader, &macroHeader, &motionHeader, &autoHeader,
+             &description, &autoHint, &macroA, &macroB, &macroC, &macroD, &intensity, &speed, &drive, &idle, &dynamics,
+             &autoMode, &autoBars, &autoOnDrop })
         addAndMakeVisible(c);
 
-    int i = 0;
-    for (auto& s : sceneLibrary())
+    for (int i = 0; i < int(sceneLibrary().size()); ++i)
     {
-        auto* b = sceneButtons.add(new juce::TextButton(s.name));
-        b->setClickingTogglesState(false);
-        b->onClick = [this, i]
+        auto* t = tiles.add(new SceneTile(i));
+        t->onClick = [this, i]
         {
             if (auto* prm = proc.apvts.getParameter(params::id::scene))
             {
@@ -42,11 +87,15 @@ ScenePanel::ScenePanel(DaliVisualProcessor& p)
                 prm->endChangeGesture();
             }
         };
-        addAndMakeVisible(b);
-        ++i;
+        addAndMakeVisible(t);
     }
     styleSmall(description);
     description.setJustificationType(juce::Justification::topLeft);
+    styleSmall(autoHint).setText("Varies the scene with the music's phrases; 'Scenes' also switches scenes.",
+                                 juce::dontSendNotification);
+    drive.setTooltip("How much the music's energy drives the speed of motion (0 = constant speed)");
+    idle.setTooltip("Motion without audio. 0 = the picture rests when nothing plays");
+    dynamics.setTooltip("Build-ups drain colour and close in; drops hit with a burst of light");
     proc.apvts.addParameterListener(params::id::scene, this);
     handleAsyncUpdate();
 }
@@ -56,42 +105,60 @@ ScenePanel::~ScenePanel() { proc.apvts.removeParameterListener(params::id::scene
 void ScenePanel::handleAsyncUpdate()
 {
     const int s = juce::roundToInt(proc.apvts.getRawParameterValue(params::id::scene)->load());
-    for (int i = 0; i < sceneButtons.size(); ++i) sceneButtons[i]->setToggleState(i == s, juce::dontSendNotification);
+    for (int i = 0; i < tiles.size(); ++i) tiles[i]->setToggleState(i == s, juce::dontSendNotification);
     const auto& info = sceneLibrary()[size_t(juce::jlimit(0, int(sceneLibrary().size()) - 1, s))];
     macroA.setLabel(info.macro[0]); macroB.setLabel(info.macro[1]);
     macroC.setLabel(info.macro[2]); macroD.setLabel(info.macro[3]);
     description.setText(info.description, juce::dontSendNotification);
+    repaint();
 }
 
-int ScenePanel::preferredHeight(int) { return kPad + kHeaderH + 4 * 34 + 44 + kHeaderH + kKnobH * 2 + kHeaderH + kKnobH + kPad * 4; }
+int ScenePanel::preferredHeight(int width)
+{
+    const int tileH = juce::roundToInt((width - 2 * kPad) / 2 * 9.0 / 16.0);
+    return kPad + kHeaderH + 4 * tileH + 40 + kPad + kHeaderH + kKnobH + kPad + kHeaderH + kKnobH * 2
+           + kPad + kHeaderH + 30 + 26 + 34 + kPad;
+}
 
 void ScenePanel::resized()
 {
     auto r = getLocalBounds().reduced(kPad);
     sceneHeader.setBounds(r.removeFromTop(kHeaderH));
-    auto grid = r.removeFromTop(4 * 34);
-    const int bw = grid.getWidth() / 2;
-    for (int i = 0; i < sceneButtons.size(); ++i)
-        sceneButtons[i]->setBounds(grid.getX() + (i % 2) * bw + 2, grid.getY() + (i / 2) * 34 + 2, bw - 4, 30);
-    description.setBounds(r.removeFromTop(44));
+    const int tw = r.getWidth() / 2, th = juce::roundToInt(tw * 9.0 / 16.0);
+    auto grid = r.removeFromTop(th * 4);
+    for (int i = 0; i < tiles.size(); ++i)
+        tiles[i]->setBounds(grid.getX() + (i % 2) * tw, grid.getY() + (i / 2) * th, tw, th);
+    description.setBounds(r.removeFromTop(40));
     r.removeFromTop(kPad);
     macroHeader.setBounds(r.removeFromTop(kHeaderH));
-    layoutKnobGrid({ &macroA, &macroB, &macroC, &macroD }, r.removeFromTop(kKnobH * 2), 2, kKnobH);
+    layoutKnobGrid({ &macroA, &macroB, &macroC, &macroD }, r.removeFromTop(kKnobH), 4, kKnobH);
     r.removeFromTop(kPad);
-    globalHeader.setBounds(r.removeFromTop(kHeaderH));
-    layoutKnobGrid({ &intensity, &speed }, r.removeFromTop(kKnobH), 2, kKnobH);
+    motionHeader.setBounds(r.removeFromTop(kHeaderH));
+    layoutKnobGrid({ &intensity, &speed, &drive, &idle, &dynamics }, r.removeFromTop(kKnobH * 2), 3, kKnobH);
+    r.removeFromTop(kPad);
+    autoHeader.setBounds(r.removeFromTop(kHeaderH));
+    auto row = r.removeFromTop(30);
+    autoMode.setBounds(row.removeFromLeft(row.getWidth() * 55 / 100).reduced(2));
+    autoBars.setBounds(row.reduced(2));
+    autoOnDrop.setBounds(r.removeFromTop(26));
+    autoHint.setBounds(r.removeFromTop(34));
 }
 
 // =============================================================================
 //  AUDIO
 // =============================================================================
 AudioPanel::AudioPanel(DaliVisualProcessor& p)
-    : proc(p),
+    : proc(p), source(p),
       sensitivity(p, params::id::sensitivity, "Sensitivity"), smoothing(p, params::id::smoothing, "Smoothing"),
       bass(p, params::id::reactBass, "Bass"), mid(p, params::id::reactMid, "Mid"), high(p, params::id::reactHigh, "High"),
       transient(p, params::id::reactTransient, "Transient"), internalBpm(p, params::id::internalBpm, "Internal BPM"),
       syncSource(p, params::id::syncSource), syncDiv(p, params::id::syncDiv)
 {
+    addAndMakeVisible(sourceHeader);
+    addAndMakeVisible(source);
+    addAndMakeVisible(sourceStatus);
+    styleSmall(sourceStatus);
+    sourceStatus.setJustificationType(juce::Justification::topLeft);
     for (juce::Component* c : std::initializer_list<juce::Component*> { &inputHeader, &reactHeader, &syncHeader, &sensitivity, &smoothing, &bass, &mid,
                      &high, &transient, &internalBpm, &syncSource, &syncDiv, &syncSourceLabel, &syncDivLabel, &readout })
         addAndMakeVisible(c);
@@ -113,19 +180,27 @@ void AudioPanel::timerCallback()
       << "Detected   " << (f.bpm > 0 ? juce::String(f.bpm, 1) + " BPM" : juce::String("-"))
       << "   conf " << juce::String(juce::roundToInt(f.bpmConfidence * 100.0f)) << "%\n"
       << "Centroid   " << juce::String(f.centroid, 2) << "    Flux " << juce::String(f.flux, 2) << "\n"
+      << "Hits       kick " << juce::String(f.kickCount) << "  snare " << juce::String(f.snareCount)
+      << "  hat " << juce::String(f.hatCount) << "\n"
+      << "Structure  build " << juce::String(juce::roundToInt(f.build * 100.0f)) << "%  drops " << juce::String(f.dropCount) << "\n"
       << "Width      " << juce::String(f.width, 2) << "    Pan  " << juce::String(f.pan, 2)
-      << (f.silent ? "\nInput      silent" : "");
+      << (t.activity.load() < 0.05f ? "\nInput      no signal" : "");
+    sourceStatus.setText(proc.getInputSourceStatus(), juce::dontSendNotification);
     readout.setText(s, juce::dontSendNotification);
 }
 
-int AudioPanel::preferredHeight(int) { return kPad * 5 + kHeaderH * 3 + kKnobH * 3 + 50 + 50 + 90; }
+int AudioPanel::preferredHeight(int) { return kPad * 6 + kHeaderH * 4 + 30 + 34 + kKnobH * 3 + 50 + 50 + 124; }
 
 void AudioPanel::resized()
 {
     auto r = getLocalBounds().reduced(kPad);
+    sourceHeader.setBounds(r.removeFromTop(kHeaderH));
+    source.setBounds(r.removeFromTop(30).reduced(0, 2));
+    sourceStatus.setBounds(r.removeFromTop(34));
+    r.removeFromTop(kPad);
     inputHeader.setBounds(r.removeFromTop(kHeaderH));
     layoutKnobGrid({ &sensitivity, &smoothing }, r.removeFromTop(kKnobH), 3, kKnobH);
-    readout.setBounds(r.removeFromTop(90));
+    readout.setBounds(r.removeFromTop(124));
     r.removeFromTop(kPad);
     reactHeader.setBounds(r.removeFromTop(kHeaderH));
     layoutKnobGrid({ &bass, &mid, &high, &transient }, r.removeFromTop(kKnobH), 4, kKnobH);

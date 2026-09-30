@@ -18,14 +18,14 @@ enum class ModSource : int
 {
     None = 0, Bass, Mid, High, Energy, Kick, Transient, Onset, Beat, BeatPhase, BarPhase,
     SyncLFO, SyncSaw, SyncSquare, Centroid, Flux, StereoWidth, StereoEnergy, StereoPan,
-    RMS, Peak, MidiTrigger, RandomStep, count
+    RMS, Peak, MidiTrigger, RandomStep, Snare, HiHat, Build, Drop, count
 };
 
 inline const char* modSourceName(ModSource s)
 {
     static const char* names[] = { "-", "Bass", "Mid", "High", "Energy", "Kick", "Transient", "Onset", "Beat",
         "Beat Phase", "Bar Phase", "Sync LFO", "Sync Saw", "Sync Square", "Centroid", "Flux", "Stereo Width",
-        "Stereo Energy", "Stereo Pan", "RMS", "Peak", "MIDI Trigger", "Random Step" };
+        "Stereo Energy", "Stereo Pan", "RMS", "Peak", "MIDI Trigger", "Random Step", "Snare", "Hi-Hat", "Build", "Drop" };
     const int i = int(s);
     return (i >= 0 && i < int(ModSource::count)) ? names[i] : "?";
 }

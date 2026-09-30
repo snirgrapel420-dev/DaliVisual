@@ -13,6 +13,8 @@
 #include "Core/EngineState.h"
 #include "Core/Parameters.h"
 #include "Audio/AudioAnalyzer.h"
+#include "Audio/LoopbackCapture.h"
+#include "Core/AutoPilot.h"
 #include "Modulation/ModulationMatrix.h"
 #include "Render/EffectChain.h"
 #include "Image/ImageProcessor.h"
@@ -57,13 +59,23 @@ public:
 
     bool isStandalone() const noexcept { return wrapperType == wrapperType_Standalone; }
 
+    // ---- audio source (standalone) ---------------------------------------------------------
+    enum InputSource { AudioInput = 0, SystemAudio = 1 };
+    /** Message thread. SystemAudio = what the computer plays (Windows loopback). */
+    void setInputSource(int source);
+    int getInputSource() const noexcept { return inputSource.load(); }
+    bool canCaptureSystemAudio() const noexcept { return isStandalone() && dali::LoopbackCapture::isSupported(); }
+    juce::String getInputSourceStatus() const;
+
     // ---- accessors for the UI ---------------------------------------------------------------
     juce::AudioProcessorValueTreeState apvts;
     dali::AudioAnalyzer     analyzer;
+    dali::LoopbackCapture   loopback { analyzer };
     dali::ModulationMatrix  matrix;
     dali::EffectChain       effectChain;
     dali::ImageProcessor    image;
     dali::EngineState       engineState;
+    dali::AutoPilot         autoPilot { apvts, engineState };
     dali::MidiMapper        midi;
     dali::OutputManager     output;
     dali::TemplateGenerator templates;
@@ -73,6 +85,7 @@ public:
 
 private:
     std::atomic<float>* sensitivityParam = nullptr;
+    std::atomic<int> inputSource { AudioInput };
     double sampleRate = 48000.0;
     float loadSmoothed = 0.0f;
 

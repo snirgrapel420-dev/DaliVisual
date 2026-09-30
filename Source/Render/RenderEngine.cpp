@@ -30,6 +30,11 @@ RenderEngine::RenderEngine(EngineState& s, juce::OpenGLContext& c, Role r)
     pAudioColor = I(id::audioColor); pCustomA = I(id::customHueA); pCustomB = I(id::customHueB);
     pTplEnable = I(id::tplEnable); pTplMode = I(id::tplMode); pTplBlend = I(id::tplBlend); pTplMix = I(id::tplMix);
     pTplMirror = I("tplMirror"); pTplKaleido = I("tplKaleido"); pTplRotation = I("tplRotation"); pTplMotion = I("tplMotion");
+    pAudioDrive = I(id::audioDrive); pIdleMotion = I(id::idleMotion); pDynamics = I(id::dynamics);
+    pAutoPilot = I(id::autoPilot); pAutoBars = I(id::autoBars); pAutoOnDrop = I(id::autoOnDrop);
+    autoTargetIndex[0] = modTargetOf(pMacro[0]); autoTargetIndex[1] = modTargetOf(pMacro[1]);
+    autoTargetIndex[2] = modTargetOf(pMacro[2]); autoTargetIndex[3] = modTargetOf(pMacro[3]);
+    autoTargetIndex[4] = modTargetOf(pColorShift);
 
     tplUniforms = {
         { "uTScale", I("tplScale") }, { "uTSym", I("tplSymmetry") }, { "uTSymCount", I("tplSymCount") },
@@ -147,7 +152,14 @@ void RenderEngine::openGLContextClosing()
 void RenderEngine::updateAnalysis(double now, float dt)
 {
     const auto snap = state.analyzer.snapshot();
-    const auto& f = snap.features;
+    // No audio arriving at all (no device, stopped host, nothing playing through the
+    // loopback) → treat as silence so the picture comes to rest instead of freezing mid-motion.
+    const bool stale = snap.stamp <= 0.0 || now - snap.stamp > 0.35;
+    static const AudioFeatures silentFeatures {};
+    const AudioFeatures& f = stale ? silentFeatures : snap.features;
+
+    activity = smoothTo(activity, stale ? 0.0f : f.activity, dt, activity < f.activity ? 0.08f : 0.35f);
+    if (!stale && f.dropCount != dropCount) dropCount = f.dropCount;
 
     const float tau  = effective(pSmoothing) * 0.25f;          // 0 .. 250 ms
     const float fast = tau * 0.3f;
@@ -167,12 +179,20 @@ void RenderEngine::updateAnalysis(double now, float dt)
     au.stereoEnergy = smoothTo(au.stereoEnergy, f.stereoEnergy,     dt, tau);
     au.rms          = smoothTo(au.rms,          f.rms,              dt, tau);
     au.peak         = smoothTo(au.peak,         f.peak,             dt, fast);
+    au.snare        = smoothTo(au.snare,        f.snare * rt,       dt, fast);
+    au.hat          = smoothTo(au.hat,          f.hat * rh,         dt, fast);
+    au.build        = smoothTo(au.build,        f.build,            dt, tau);
+    au.drop         = smoothTo(au.drop,         f.drop,             dt, fast);
 
     DetectedTiming det;
     det.bpm = f.bpm; det.confidence = f.bpmConfidence; det.beatPhase = f.beatPhase; det.stamp = snap.stamp;
-    clock.update(now, dt, SyncSource(choice(pSyncSource)), state.host.read(), det,
-                 effective(pInternalBpm), choice(pSyncDiv));
-    if (clock.beatHappened()) randomStep = random.nextFloat();
+    // The musical clock only runs while music plays: in silence everything rests.
+    if (activity > 0.01f)
+    {
+        clock.update(now, dt * juce::jmin(1.0f, activity * 1.5f), SyncSource(choice(pSyncSource)), state.host.read(), det,
+                     effective(pInternalBpm), choice(pSyncDiv));
+        if (clock.beatHappened()) randomStep = random.nextFloat();
+    }
 
     const auto midiCount = state.midiTriggerCount.load();
     if (midiCount != lastMidiCount) { lastMidiCount = midiCount; midiEnv = juce::jmax(midiEnv, state.midiTriggerVelocity.load()); }
@@ -190,7 +210,7 @@ void RenderEngine::updateModulation(float dt)
     sources[ModSource::Kick]         = au.kick;
     sources[ModSource::Transient]    = au.transient;
     sources[ModSource::Onset]        = au.onset;
-    sources[ModSource::Beat]         = clock.beatPulse();
+    sources[ModSource::Beat]         = clock.beatPulse() * activity;
     sources[ModSource::BeatPhase]    = clock.beatPhase();
     sources[ModSource::BarPhase]     = clock.barPhase();
     sources[ModSource::SyncLFO]      = 0.5f - 0.5f * std::cos(juce::MathConstants<float>::twoPi * sp);
@@ -205,12 +225,49 @@ void RenderEngine::updateModulation(float dt)
     sources[ModSource::Peak]         = au.peak;
     sources[ModSource::MidiTrigger]  = midiEnv;
     sources[ModSource::RandomStep]   = randomStep;
+    sources[ModSource::Snare]        = au.snare;
+    sources[ModSource::HiHat]        = au.hat;
+    sources[ModSource::Build]        = au.build;
+    sources[ModSource::Drop]         = au.drop;
 
     const auto version = state.matrix.getVersion();
     if (version != lastMatrixVersion) { lastMatrixVersion = version; modEngine.reset(); }
 
     const auto slots = state.matrix.getSlots();
     modEngine.process(slots, sources, dt, modOffsets.data(), int(modOffsets.size()));
+    updateAutoPilot(dt);
+}
+
+void RenderEngine::updateAutoPilot(float dt)
+{
+    static const int barsTable[] = { 2, 4, 8, 16, 32 };
+    const int mode = choice(pAutoPilot);
+    const int bars = barsTable[juce::jlimit(0, 4, choice(pAutoBars))];
+    const bool onDrop = flag(pAutoOnDrop);
+
+    const std::int64_t bar = std::int64_t(std::floor(clock.beatClock() / 4.0));
+    bool snap = false;
+    if (onDrop && dropCount != autoLastDrop) { autoLastDrop = dropCount; ++autoDropsSeen; snap = true; }
+    const std::int64_t key = (bar >= 0 ? bar / bars : 0) * 1009 + std::int64_t(autoDropsSeen);
+
+    if (mode == 0) autoTarget.fill(0.0f);
+    else if (key != autoKey && activity > 0.5f)
+    {
+        juce::Random r(key * 7919 + 17);                 // same phrase → same variation in every engine
+        for (int i = 0; i < 4; ++i) autoTarget[size_t(i)] = (r.nextFloat() - 0.5f) * 0.5f;   // macros ±0.25
+        autoTarget[4] = r.nextFloat() * 0.35f;           // colour shift
+    }
+    if (mode != 0) autoKey = key;
+
+    // glide half a bar into the new variation (or snap on a drop)
+    const float beatSec = 60.0f / float(juce::jmax(40.0, clock.bpm() > 0 ? clock.bpm() : 120.0));
+    const float tauA = snap ? 0.02f : beatSec * 2.0f;
+    for (int i = 0; i < kAutoTargets; ++i)
+    {
+        autoCurrent[size_t(i)] = smoothTo(autoCurrent[size_t(i)], autoTarget[size_t(i)], dt * juce::jmax(0.05f, activity), tauA);
+        const int t = autoTargetIndex[i];
+        if (t >= 0) modOffsets[size_t(t)] += autoCurrent[size_t(i)];
+    }
 }
 
 void RenderEngine::uploadImageIfChanged()
@@ -259,7 +316,9 @@ void RenderEngine::setCommon(Shader& s, int w, int h)
     s.set("uAbsTime", float(std::fmod(lastTime - startTime, 3600.0)));
     s.set("uBass", au.bass);       s.set("uMid", au.mid);         s.set("uHigh", au.high);
     s.set("uEnergy", au.energy);   s.set("uKick", au.kick);       s.set("uTransient", au.transient);
-    s.set("uBeat", clock.beatPulse());
+    s.set("uBeat", clock.beatPulse() * activity);
+    s.set("uSnare", au.snare); s.set("uHat", au.hat); s.set("uBuild", au.build); s.set("uDrop", au.drop);
+    s.set("uActivity", activity);
     s.set("uCentroid", au.centroid); s.set("uFlux", au.flux); s.set("uWidth", au.width); s.set("uPan", au.pan);
     s.set("uBeatPhase", clock.beatPhase()); s.set("uBarPhase", clock.barPhase()); s.set("uSyncPhase", clock.syncPhase());
     s.set("uBeatClock", float(std::fmod(clock.beatClock(), 256.0)));
@@ -323,9 +382,13 @@ void RenderEngine::renderOpenGL()
     updateAnalysis(now, dt);
     updateModulation(dt);
 
+    // Motion follows the music: silence rests (or idles), louder passages move faster.
     const float speed = effective(pSpeed);
-    sceneTime += dt * speed;
-    templateMotion += dt * effective(pTplMotion) * (0.5 + 0.5 * speed);
+    const float drive = effective(pAudioDrive);
+    const float musical = (1.0f - drive) + drive * (0.25f + 1.1f * au.energy + 0.35f * au.bass);
+    const float rate = juce::jmap(activity, effective(pIdleMotion), musical);
+    sceneTime += dt * speed * rate;
+    templateMotion += dt * effective(pTplMotion) * (0.5 + 0.5 * speed) * rate;
 
     ColorSystem::Inputs ci;
     ci.palette = choice(pPalette); ci.customHueA = effective(pCustomA); ci.customHueB = effective(pCustomB);
@@ -459,6 +522,7 @@ void RenderEngine::renderOpenGL()
         outputShader.set("uSaturation", effective(pSat));
         outputShader.set("uBrightness", effective(pBright));
         outputShader.set("uContrast", effective(pContrast));
+        outputShader.set("uDynamics", effective(pDynamics));
         bindTexture(0, src);
         drawFullscreen();
     };
@@ -507,7 +571,9 @@ void RenderEngine::publishTelemetry(double now)
 
     state.telemetry.bpm.store(float(clock.bpm()));
     state.telemetry.clockSource.store(int(clock.source()));
-    state.telemetry.beatPulse.store(clock.beatPulse());
+    state.telemetry.beatPulse.store(clock.beatPulse() * activity);
+    state.telemetry.activity.store(activity);
+    state.telemetry.barCount.store(std::int64_t(std::floor(clock.beatClock() / 4.0)));
 
     const auto& targets = params::modTargets();
     for (size_t t = 0; t < targets.size(); ++t)

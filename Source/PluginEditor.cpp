@@ -2,7 +2,7 @@
 
 DaliVisualEditor::DaliVisualEditor(DaliVisualProcessor& p)
     : AudioProcessorEditor(&p), proc(p),
-      header(p), preview(p.engineState, dali::RenderEngine::Role::Preview), meters(p), settings(p)
+      header(p), preview(p.engineState, dali::RenderEngine::Role::Preview), meters(p)
 {
     setLookAndFeel(&lnf);
 
@@ -10,7 +10,6 @@ DaliVisualEditor::DaliVisualEditor(DaliVisualProcessor& p)
     addAndMakeVisible(preview);
     addAndMakeVisible(tabs);
     addAndMakeVisible(meters);
-    addChildComponent(settings);
 
     auto add = [this](const juce::String& name, std::unique_ptr<dali::PanelBase> panel)
     {
@@ -25,19 +24,35 @@ DaliVisualEditor::DaliVisualEditor(DaliVisualProcessor& p)
     tabs.setTabBarDepth(32);
     tabs.setOutline(0);
 
-    header.onSettings = [this] { settings.setVisible(!settings.isVisible()); if (settings.isVisible()) settings.toFront(true); };
-    settings.onClose = [this] { settings.setVisible(false); };
+    header.onSettings = [this] { showSettings(); };
+    header.onTogglePanel = [this] { setPanelVisible(!panelVisible); };
     preview.onDoubleClick = [this] { proc.output.toggle(); };
 
     setWantsKeyboardFocus(true);
     setResizable(true, true);
-    setResizeLimits(1060, 660, 3840, 2160);
-    setSize(1320, 800);
+    setResizeLimits(1200, 700, 3840, 2160);
+    setSize(1440, 860);
 }
 
 DaliVisualEditor::~DaliVisualEditor()
 {
+    settingsWindow = nullptr;          // uses our LookAndFeel: destroy it first
     setLookAndFeel(nullptr);
+}
+
+void DaliVisualEditor::showSettings()
+{
+    if (settingsWindow == nullptr) settingsWindow = std::make_unique<dali::SettingsWindow>(proc, lnf, this);
+    else if (settingsWindow->isVisible()) settingsWindow->setVisible(false);
+    else settingsWindow->show(this);
+}
+
+void DaliVisualEditor::setPanelVisible(bool v)
+{
+    panelVisible = v;
+    tabs.setVisible(v);
+    header.setPanelVisible(v);
+    resized();
 }
 
 void DaliVisualEditor::paint(juce::Graphics& g)
@@ -45,41 +60,27 @@ void DaliVisualEditor::paint(juce::Graphics& g)
     g.fillAll(dali::colours::bg);
 }
 
-void DaliVisualEditor::paintOverChildren(juce::Graphics& g)
-{
-    if (!dragging) return;
-    g.setColour(dali::colours::accent.withAlpha(0.18f));
-    g.fillRect(getLocalBounds());
-    g.setColour(dali::colours::accent);
-    g.drawRect(getLocalBounds(), 3);
-    g.setFont(juce::Font(juce::FontOptions(20.0f, juce::Font::bold)));
-    g.drawText("Drop image to create a generative template", getLocalBounds(), juce::Justification::centred);
-}
-
 void DaliVisualEditor::resized()
 {
     auto r = getLocalBounds();
-    header.setBounds(r.removeFromTop(52));
-    meters.setBounds(r.removeFromBottom(40));
-    tabs.setBounds(r.removeFromRight(juce::jlimit(360, 460, getWidth() / 3)));
-    preview.setBounds(r.reduced(8));
-    settings.setBounds(getLocalBounds());
+    header.setBounds(r.removeFromTop(54));
+    meters.setBounds(r.removeFromBottom(38));
+    if (panelVisible) tabs.setBounds(r.removeFromRight(juce::jlimit(380, 470, getWidth() / 3)));
+    preview.setBounds(r.reduced(panelVisible ? 8 : 0));
 }
 
 bool DaliVisualEditor::keyPressed(const juce::KeyPress& k)
 {
-    if (k.getKeyCode() == 'F' || k.getKeyCode() == 'f') { proc.output.toggle(); return true; }
-    if (k == juce::KeyPress::escapeKey)
-    {
-        if (settings.isVisible()) { settings.setVisible(false); return true; }
-        if (proc.output.isOpen()) { proc.output.close(); return true; }
-    }
-    if (k.getKeyCode() >= '1' && k.getKeyCode() <= '8')
+    const int code = k.getKeyCode();
+    if (code == 'F' || code == 'f') { proc.output.toggle(); return true; }
+    if (k == juce::KeyPress::tabKey) { setPanelVisible(!panelVisible); return true; }
+    if (k == juce::KeyPress::escapeKey && proc.output.isOpen()) { proc.output.close(); return true; }
+    if (code >= '1' && code <= '8')
     {
         if (auto* prm = proc.apvts.getParameter(dali::params::id::scene))
         {
             prm->beginChangeGesture();
-            prm->setValueNotifyingHost(prm->convertTo0to1(float(k.getKeyCode() - '1')));
+            prm->setValueNotifyingHost(prm->convertTo0to1(float(code - '1')));
             prm->endChangeGesture();
         }
         return true;
@@ -95,8 +96,6 @@ bool DaliVisualEditor::isInterestedInFileDrag(const juce::StringArray& files)
 
 void DaliVisualEditor::filesDropped(const juce::StringArray& files, int, int)
 {
-    dragging = false;
-    repaint();
     for (auto& path : files)
     {
         const juce::File f(path);
@@ -104,6 +103,7 @@ void DaliVisualEditor::filesDropped(const juce::StringArray& files, int, int)
         {
             if (auto* prm = proc.apvts.getParameter(dali::params::id::tplEnable))
                 if (prm->getValue() < 0.5f) prm->setValueNotifyingHost(1.0f);
+            if (!panelVisible) setPanelVisible(true);
             tabs.setCurrentTabIndex(ImageTab);
             return;
         }

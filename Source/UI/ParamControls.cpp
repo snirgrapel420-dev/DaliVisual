@@ -73,6 +73,7 @@ ParamKnob::ParamKnob(DaliVisualProcessor& p, const juce::String& id, const juce:
     addAndMakeVisible(label);
 
     attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.apvts, id, slider);
+    setTooltip(prm != nullptr ? prm->getName(64) : id);
     if (prm != nullptr) slider.setDoubleClickReturnValue(true, prm->convertFrom0to1(prm->getDefaultValue()));
     startTimerHz(30);
 }

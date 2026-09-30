@@ -4,20 +4,66 @@
 namespace dali
 {
 // =============================================================================
+//  shared combos
+// =============================================================================
+DisplayCombo::DisplayCombo(DaliVisualProcessor& p) : proc(p)
+{
+    setTooltip("Which display the fullscreen output (GO LIVE) appears on");
+    onChange = [this]
+    {
+        const int idx = getSelectedId() - 1;
+        if (idx < 0) return;
+        proc.engineState.output.displayIndex = idx;
+        if (proc.output.isOpen()) proc.output.open(idx);        // move the live output right away
+    };
+    refresh();
+    startTimer(1500);
+}
+
+void DisplayCombo::refresh()
+{
+    const auto displays = OutputManager::getDisplays();
+    lastCount = displays.size();
+    clear(juce::dontSendNotification);
+    for (auto& d : displays) addItem(d.name, d.index + 1);
+    int chosen = proc.engineState.output.displayIndex.load();
+    if (chosen < 0 || chosen >= displays.size()) chosen = displays.size() - 1;   // default: last (usually external)
+    setSelectedId(chosen + 1, juce::dontSendNotification);
+}
+
+void DisplayCombo::timerCallback()
+{
+    if (isPopupActive()) return;
+    const int count = OutputManager::getDisplays().size();
+    const int want = proc.engineState.output.displayIndex.load() + 1;
+    if (count != lastCount || (want > 0 && want != getSelectedId())) refresh();   // monitor plugged in / changed elsewhere
+}
+
+SourceCombo::SourceCombo(DaliVisualProcessor& p) : proc(p)
+{
+    if (proc.canCaptureSystemAudio()) addItem("System Audio (what you hear)", 2);
+    addItem(proc.isStandalone() ? "Audio Input (device)" : "Track Audio (host)", 1);
+    setSelectedId(proc.getInputSource() + 1, juce::dontSendNotification);
+    setEnabled(proc.isStandalone());
+    onChange = [this] { proc.setInputSource(getSelectedId() - 1); };
+    startTimer(500);
+}
+
+void SourceCombo::timerCallback()
+{
+    if (!isPopupActive() && getSelectedId() != proc.getInputSource() + 1)
+        setSelectedId(proc.getInputSource() + 1, juce::dontSendNotification);
+    setTooltip(proc.getInputSourceStatus());
+}
+
+// =============================================================================
 //  HEADER
 // =============================================================================
-HeaderBar::HeaderBar(DaliVisualProcessor& p) : proc(p), scene(p, params::id::scene)
+HeaderBar::HeaderBar(DaliVisualProcessor& p) : proc(p), scene(p, params::id::scene), source(p), display(p)
 {
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &scene, &preset, &prev, &next, &presetMenu, &fullscreen, &displayMenu, &settings,
-                     &sceneLabel, &presetLabel })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &scene, &preset, &prev, &next, &presetMenu,
+                                                                        &source, &display, &identify, &live, &panelBtn, &settings })
         addAndMakeVisible(c);
-    for (auto* l : { &sceneLabel, &presetLabel })
-    {
-        l->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        l->setColour(juce::Label::textColourId, colours::textDim);
-    }
-    sceneLabel.setText("SCENE", juce::dontSendNotification);
-    presetLabel.setText("PRESET", juce::dontSendNotification);
 
     preset.setTextWhenNothingSelected("- unsaved -");
     preset.onChange = [this]
@@ -28,16 +74,26 @@ HeaderBar::HeaderBar(DaliVisualProcessor& p) : proc(p), scene(p, params::id::sce
     prev.onClick = [this] { proc.presets.previous(); };
     next.onClick = [this] { proc.presets.next(); };
     presetMenu.onClick = [this] { showPresetMenu(); };
-    fullscreen.onClick = [this] { proc.output.toggle(); };
-    displayMenu.onClick = [this] { showFullscreenMenu(); };
+    identify.onClick = [this] { proc.output.identifyDisplays(); };
+    live.onClick = [this] { proc.output.toggle(); updateLiveButton(); };
+    panelBtn.setClickingTogglesState(true);
+    panelBtn.setToggleState(true, juce::dontSendNotification);
+    panelBtn.onClick = [this] { if (onTogglePanel) onTogglePanel(); };
     settings.onClick = [this] { if (onSettings) onSettings(); };
-    fullscreen.setTooltip("Fullscreen output on the selected display (F).  ESC closes it.");
-    displayMenu.setTooltip("Choose the output display");
+
+    prev.setTooltip("Previous preset");
+    next.setTooltip("Next preset");
+    presetMenu.setTooltip("Save, save as, duplicate, delete ...");
+    identify.setTooltip("Show the number of every display on its screen");
+    live.setTooltip("Fullscreen output on the chosen display (key F). ESC or double-click ends it.");
+    panelBtn.setTooltip("Show / hide the side panel (Tab) - bigger preview for performing");
+    scene.setTooltip("Scene (keys 1-8)");
 
     proc.presets.addChangeListener(this);
     proc.output.addChangeListener(this);
     refreshPresets();
-    updateFullscreenButton();
+    updateLiveButton();
+    startTimerHz(4);
 }
 
 HeaderBar::~HeaderBar()
@@ -55,10 +111,12 @@ void HeaderBar::refreshPresets()
     if (cur >= 0) preset.setSelectedItemIndex(cur, juce::dontSendNotification);
 }
 
-void HeaderBar::updateFullscreenButton()
+void HeaderBar::updateLiveButton()
 {
-    fullscreen.setToggleState(proc.output.isOpen(), juce::dontSendNotification);
-    fullscreen.setButtonText(proc.output.isOpen() ? "OUTPUT LIVE" : "FULLSCREEN");
+    const bool on = proc.output.isOpen();
+    live.setToggleState(on, juce::dontSendNotification);
+    live.setButtonText(on ? "LIVE  - STOP" : "GO LIVE");
+    live.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xffe0304a));
 }
 
 void HeaderBar::askName(const juce::String& title, const juce::String& initial, std::function<void(juce::String)> done)
@@ -67,6 +125,7 @@ void HeaderBar::askName(const juce::String& title, const juce::String& initial, 
     w->addTextEditor("name", initial);
     w->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     w->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    w->setAlwaysOnTop(true);
     w->enterModalState(true, juce::ModalCallbackFunction::create([w, done](int r)
     {
         if (r == 1)
@@ -112,57 +171,67 @@ void HeaderBar::showPresetMenu()
     });
 }
 
-void HeaderBar::showFullscreenMenu()
-{
-    juce::PopupMenu m;
-    m.addSectionHeader("Output display");
-    const auto displays = OutputManager::getDisplays();
-    const int chosen = proc.engineState.output.displayIndex.load();
-    for (auto& d : displays) m.addItem(100 + d.index, d.name, true, d.index == chosen || (chosen < 0 && d.index == displays.size() - 1));
-    m.addSeparator();
-    m.addItem(1, proc.output.isOpen() ? "Close output" : "Open output");
-    m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&displayMenu), [this](int r)
-    {
-        if (r >= 100) { proc.engineState.output.displayIndex = r - 100; if (proc.output.isOpen()) proc.output.open(r - 100); }
-        else if (r == 1) proc.output.toggle();
-    });
-}
-
 void HeaderBar::paint(juce::Graphics& g)
 {
     g.fillAll(colours::bg);
     g.setColour(colours::outline);
     g.fillRect(getLocalBounds().removeFromBottom(1));
 
-    auto r = getLocalBounds().reduced(14, 0);
-    juce::ColourGradient grad(colours::accent, float(r.getX()), 0.0f, colours::accent2, float(r.getX() + 180), 0.0f, false);
+    juce::ColourGradient grad(colours::accent, 14.0f, 0.0f, colours::accent2, 180.0f, 0.0f, false);
     g.setGradientFill(grad);
-    g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)).withExtraKerningFactor(0.12f));
-    g.drawText("DALI VISUAL", r.removeFromLeft(190).withTrimmedBottom(12), juce::Justification::bottomLeft);
+    g.setFont(juce::Font(juce::FontOptions(21.0f, juce::Font::bold)).withExtraKerningFactor(0.12f));
+    g.drawText("DALI VISUAL", juce::Rectangle<int>(14, 8, 180, 26), juce::Justification::centredLeft);
     g.setColour(colours::textDim);
-    g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)).withExtraKerningFactor(0.3f));
-    g.drawText("BY DALI AUDIO", juce::Rectangle<int>(14, getHeight() - 16, 190, 12), juce::Justification::left);
+    g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)).withExtraKerningFactor(0.3f));
+    g.drawText("BY DALI AUDIO", juce::Rectangle<int>(15, 34, 180, 12), juce::Justification::centredLeft);
+
+    g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)).withExtraKerningFactor(0.15f));
+    for (auto& c : captions)
+    {
+        g.setColour(colours::textDim);
+        g.drawText(c.text, c.area, juce::Justification::centredLeft);
+    }
+    // separators between groups
+    g.setColour(colours::outline);
+    for (auto* c : { (juce::Component*) &source, (juce::Component*) &display, (juce::Component*) &panelBtn })
+        g.fillRect(c->getX() - 9, 10, 1, getHeight() - 20);
 }
 
 void HeaderBar::resized()
 {
-    auto r = getLocalBounds().reduced(10, 8);
-    r.removeFromLeft(200);
-    settings.setBounds(r.removeFromRight(90).reduced(2, 4));
-    r.removeFromRight(6);
-    displayMenu.setBounds(r.removeFromRight(26).reduced(1, 4));
-    fullscreen.setBounds(r.removeFromRight(116).reduced(1, 4));
-    r.removeFromRight(14);
+    captions.clearQuick();
+    auto r = getLocalBounds().reduced(10, 0);
+    r.removeFromLeft(185);
+    const int capH = 13, ctlY = 20, ctlH = 26;
+    auto place = [&](juce::Component& c, int x, int w, const juce::String& caption = {})
+    {
+        c.setBounds(x, ctlY, w, ctlH);
+        if (caption.isNotEmpty()) captions.add({ caption, juce::Rectangle<int>(x + 2, 5, w, capH) });
+    };
 
-    auto sceneArea = r.removeFromLeft(juce::jmin(260, r.getWidth() / 3));
-    sceneLabel.setBounds(sceneArea.removeFromLeft(48));
-    scene.setBounds(sceneArea.reduced(2, 5));
-    r.removeFromLeft(14);
-    presetLabel.setBounds(r.removeFromLeft(54));
-    presetMenu.setBounds(r.removeFromRight(72).reduced(2, 5));
-    next.setBounds(r.removeFromRight(28).reduced(1, 5));
-    prev.setBounds(r.removeFromRight(28).reduced(1, 5));
-    preset.setBounds(r.reduced(2, 5));
+    // right side (fixed)
+    int x = r.getRight();
+    x -= 86;  place(settings, x, 86);
+    x -= 70;  place(panelBtn, x, 64);
+    x -= 18 + 104; place(live, x, 104);
+    x -= 40;  place(identify, x, 36, "");
+    x -= 200; place(display, x, 196, "OUTPUT DISPLAY");
+    const int sourceW = 188;
+    x -= 18 + sourceW; place(source, x, sourceW, "AUDIO SOURCE");
+    const int rightStart = x - 18;
+
+    // left side (flexible): scene + preset
+    int lx = r.getX();
+    const int avail = rightStart - lx;
+    const int sceneW = juce::jlimit(150, 220, avail * 2 / 5);
+    place(scene, lx, sceneW, "SCENE");
+    lx += sceneW + 12;
+    const int presetW = juce::jmax(120, rightStart - lx - 3 * 30 - 6);
+    place(preset, lx, presetW, "PRESET");
+    lx += presetW + 4;
+    place(prev, lx, 28);       lx += 30;
+    place(next, lx, 28);       lx += 30;
+    place(presetMenu, lx, 30);
 }
 
 // =============================================================================
@@ -171,13 +240,16 @@ void HeaderBar::resized()
 void MeterBar::timerCallback()
 {
     const auto f = proc.analyzer.snapshot().features;
-    auto fall = [](float cur, float v) { return v > cur ? v : cur * 0.88f + v * 0.12f; };
-    bass = fall(bass, f.bassEnv); mid = fall(mid, f.midEnv); high = fall(high, f.highEnv); energy = fall(energy, f.energy);
     const auto& t = proc.engineState.telemetry;
-    beat = t.beatPulse.load();
+    activity = t.activity.load();
+    auto fall = [](float cur, float v) { return v > cur ? v : cur * 0.86f + v * 0.14f; };
+    const float a = activity;
+    bass = fall(bass, f.bassEnv * a); mid = fall(mid, f.midEnv * a); high = fall(high, f.highEnv * a);
+    energy = fall(energy, f.energy * a);
+    kick = f.kick * a; snare = f.snare * a; hat = f.hat * a; build = f.build * a; drop = f.drop * a;
     bpm = t.bpm.load(); fps = t.previewFps.load(); outFps = t.outputFps.load();
     cpu = t.cpuLoad.load(); frameMs = t.frameMs.load(); source = t.clockSource.load();
-    output = t.outputActive.load(); silent = f.silent;
+    output = t.outputActive.load();
     repaint();
 }
 
@@ -188,115 +260,120 @@ void MeterBar::paint(juce::Graphics& g)
     g.setColour(outline);
     g.fillRect(getLocalBounds().removeFromTop(1));
 
-    auto r = getLocalBounds().reduced(14, 9);
-    auto meter = [&](const char* name, float v, juce::Colour c)
-    {
-        auto cell = r.removeFromLeft(128);
-        r.removeFromLeft(10);
-        g.setColour(textDim);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(name, cell.removeFromLeft(46), juce::Justification::centredLeft);
-        auto bar = cell.withSizeKeepingCentre(cell.getWidth(), 8).toFloat();
-        g.setColour(panel2);
-        g.fillRoundedRectangle(bar, 4.0f);
-        g.setColour(c);
-        g.fillRoundedRectangle(bar.withWidth(bar.getWidth() * juce::jlimit(0.0f, 1.0f, v)), 4.0f);
-    };
-    meter("BASS", bass, accent);
-    meter("MID", mid, accent2);
-    meter("HIGH", high, modRing);
-    meter("ENERGY", energy, text.withAlpha(0.8f));
+    auto r = getLocalBounds().reduced(14, 8);
+    const juce::Font labelFont(juce::FontOptions(9.5f, juce::Font::bold));
+    const juce::Font valueFont(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 12.0f, juce::Font::plain));
 
-    auto beatCell = r.removeFromLeft(70);
-    g.setColour(textDim);
-    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-    g.drawText("BEAT", beatCell.removeFromLeft(40), juce::Justification::centredLeft);
-    auto led = beatCell.withSizeKeepingCentre(14, 14).toFloat();
-    g.setColour(panel2);
-    g.fillEllipse(led);
-    g.setColour(accent.withAlpha(juce::jlimit(0.0f, 1.0f, beat)));
-    g.fillEllipse(led);
-
-    static const char* srcNames[] = { "HOST", "DETECT", "INT" };
-    auto readout = [&](const juce::String& label, const juce::String& value, int w)
+    auto bar = [&](const char* name, float v, juce::Colour c, int w)
     {
         auto cell = r.removeFromLeft(w);
-        g.setColour(textDim);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(label, cell.removeFromLeft(32), juce::Justification::centredLeft);
-        g.setColour(colours::text);
-        g.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
-        g.drawText(value, cell, juce::Justification::centredLeft);
+        r.removeFromLeft(10);
+        g.setColour(textDim); g.setFont(labelFont);
+        g.drawText(name, cell.removeFromLeft(40), juce::Justification::centredLeft);
+        auto b = cell.withSizeKeepingCentre(cell.getWidth(), 7).toFloat();
+        g.setColour(panel2); g.fillRoundedRectangle(b, 3.5f);
+        g.setColour(c); g.fillRoundedRectangle(b.withWidth(b.getWidth() * juce::jlimit(0.0f, 1.0f, v)), 3.5f);
     };
-    readout("BPM", juce::String(bpm, 1) + " " + srcNames[juce::jlimit(0, 2, source)], 130);
-    readout("FPS", output ? juce::String(juce::roundToInt(outFps)) + " OUT / " + juce::String(juce::roundToInt(fps))
-                       : juce::String(juce::roundToInt(fps)) + "  " + juce::String(frameMs, 1) + "ms", 150);
-    readout("CPU", juce::String(cpu * 100.0f, 1) + "% audio", 120);
-    if (silent)
+    auto led = [&](const char* name, float v, juce::Colour c)
+    {
+        auto cell = r.removeFromLeft(54);
+        g.setColour(textDim); g.setFont(labelFont);
+        g.drawText(name, cell.removeFromLeft(36), juce::Justification::centredLeft);
+        auto d = cell.withSizeKeepingCentre(12, 12).toFloat();
+        g.setColour(panel2); g.fillEllipse(d);
+        g.setColour(c.withAlpha(juce::jlimit(0.0f, 1.0f, v))); g.fillEllipse(d);
+    };
+    auto value = [&](const char* name, const juce::String& text, int w)
+    {
+        auto cell = r.removeFromLeft(w);
+        g.setColour(textDim); g.setFont(labelFont);
+        g.drawText(name, cell.removeFromLeft(30), juce::Justification::centredLeft);
+        g.setColour(colours::text); g.setFont(valueFont);
+        g.drawText(text, cell, juce::Justification::centredLeft);
+    };
+
+    bar("BASS", bass, accent, 112);
+    bar("MID", mid, accent2, 112);
+    bar("HIGH", high, modRing, 112);
+    bar("ENERGY", energy, colours::text.withAlpha(0.8f), 112);
+    led("KICK", kick, accent);
+    led("SNARE", snare, accent2);
+    led("HAT", hat, modRing);
+    r.removeFromLeft(6);
+    bar("BUILD", juce::jmax(build, drop), drop > 0.05f ? juce::Colour(0xffff5c7a) : learn, 110);
+
+    static const char* srcNames[] = { "HOST", "DETECT", "INT" };
+    value("BPM", activity > 0.05f ? juce::String(bpm, 1) + " " + srcNames[juce::jlimit(0, 2, source)] : juce::String("--"), 118);
+    value("FPS", output ? juce::String(juce::roundToInt(outFps)) + " LIVE" : juce::String(juce::roundToInt(fps)), 84);
+    value("CPU", juce::String(cpu * 100.0f, 1) + "%", 76);
+
+    if (activity < 0.05f)
     {
         g.setColour(learn);
         g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
-        g.drawText("NO INPUT", r, juce::Justification::centredRight);
+        const juce::String hint = proc.getInputSource() == DaliVisualProcessor::SystemAudio
+                                      ? "NO SIGNAL - play something on this computer"
+                                      : (proc.isStandalone() ? "NO SIGNAL - choose an input or System Audio"
+                                                             : "NO SIGNAL - play the track");
+        g.drawFittedText(hint, r, juce::Justification::centredRight, 1);
     }
 }
 
 // =============================================================================
 //  SETTINGS
 // =============================================================================
-SettingsPanel::SettingsPanel(DaliVisualProcessor& p) : proc(p)
+SettingsPanel::SettingsPanel(DaliVisualProcessor& p) : proc(p), display(p), source(p)
 {
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &outHeader, &midiHeader, &infoHeader, &display, &resolution, &displayLabel,
-                     &resolutionLabel, &midiLast, &info, &vsync, &previewWhileOutput, &noteScenes, &programScenes,
-                     &openOutput, &clearMidi, &factory, &close })
+    for (juce::Component* c : std::initializer_list<juce::Component*> {
+             &outHeader, &audioHeader, &midiHeader, &infoHeader, &display, &source, &resolution, &displayLabel,
+             &resolutionLabel, &sourceLabel, &sourceStatus, &midiLast, &info, &vsync, &previewWhileOutput,
+             &noteScenes, &programScenes, &identify, &openOutput, &clearMidi, &factory })
         addAndMakeVisible(c);
+
     displayLabel.setText("Output display", juce::dontSendNotification);
     resolutionLabel.setText("Render resolution", juce::dontSendNotification);
-    for (auto* l : { &displayLabel, &resolutionLabel, &midiLast, &info })
+    sourceLabel.setText("Listen to", juce::dontSendNotification);
+    for (auto* l : { &displayLabel, &resolutionLabel, &sourceLabel, &sourceStatus, &midiLast, &info })
     {
-        l->setFont(juce::Font(juce::FontOptions(12.0f)));
+        l->setFont(juce::Font(juce::FontOptions(12.5f)));
         l->setColour(juce::Label::textColourId, colours::textDim);
     }
     info.setJustificationType(juce::Justification::topLeft);
+    sourceStatus.setJustificationType(juce::Justification::topLeft);
 
     resolution.addItem("50 %  (fastest)", 1);
     resolution.addItem("75 %", 2);
     resolution.addItem("100 %  (native)", 3);
     resolution.onChange = [this] { proc.engineState.output.renderScaleIndex = resolution.getSelectedId() - 1; };
-    display.onChange = [this]
-    {
-        proc.engineState.output.displayIndex = display.getSelectedId() - 1;
-        if (proc.output.isOpen()) proc.output.open(display.getSelectedId() - 1);
-    };
     vsync.onClick = [this] { proc.engineState.output.vsync = vsync.getToggleState(); };
     previewWhileOutput.onClick = [this] { proc.engineState.output.previewWhileOutput = previewWhileOutput.getToggleState(); };
     noteScenes.onClick = [this] { proc.midi.noteSceneSwitching = noteScenes.getToggleState(); };
     programScenes.onClick = [this] { proc.midi.programChangeScenes = programScenes.getToggleState(); };
+    identify.onClick = [this] { proc.output.identifyDisplays(); };
     openOutput.onClick = [this] { proc.output.toggle(); refresh(); };
     clearMidi.onClick = [this] { proc.midi.clearAll(); };
     factory.onClick = [this] { proc.presets.installFactoryPresets(true); };
-    close.onClick = [this] { if (onClose) onClose(); };
+    setSize(580, 640);
+    refresh();
     startTimerHz(4);
 }
 
 void SettingsPanel::refresh()
 {
-    display.clear(juce::dontSendNotification);
-    const auto displays = OutputManager::getDisplays();
-    for (auto& d : displays) display.addItem(d.name, d.index + 1);
-    int chosen = proc.engineState.output.displayIndex.load();
-    if (chosen < 0 || chosen >= displays.size()) chosen = displays.size() - 1;
-    display.setSelectedId(chosen + 1, juce::dontSendNotification);
+    display.refresh();
     resolution.setSelectedId(proc.engineState.output.renderScaleIndex.load() + 1, juce::dontSendNotification);
     vsync.setToggleState(proc.engineState.output.vsync.load(), juce::dontSendNotification);
     previewWhileOutput.setToggleState(proc.engineState.output.previewWhileOutput.load(), juce::dontSendNotification);
     noteScenes.setToggleState(proc.midi.noteSceneSwitching.load(), juce::dontSendNotification);
     programScenes.setToggleState(proc.midi.programChangeScenes.load(), juce::dontSendNotification);
-    openOutput.setButtonText(proc.output.isOpen() ? "Close Fullscreen Output" : "Open Fullscreen Output");
+    openOutput.setButtonText(proc.output.isOpen() ? "STOP LIVE OUTPUT" : "GO LIVE");
 }
 
 void SettingsPanel::timerCallback()
 {
-    if (!isVisible()) return;
+    if (!isShowing()) return;
+    openOutput.setButtonText(proc.output.isOpen() ? "STOP LIVE OUTPUT" : "GO LIVE");
+    sourceStatus.setText(proc.getInputSourceStatus(), juce::dontSendNotification);
     const auto last = proc.midi.getLastMessageText();
     midiLast.setText("Last MIDI: " + (last.isNotEmpty() ? last : juce::String("-")), juce::dontSendNotification);
     juce::String renderer;
@@ -304,45 +381,62 @@ void SettingsPanel::timerCallback()
     juce::String s;
     s << "Renderer: " << (renderer.isNotEmpty() ? renderer : juce::String("starting...")) << "\n"
       << "Presets: " << PresetManager::getPresetFolder().getFullPathName() << "\n"
-      << "Mode: " << (proc.isStandalone() ? "Standalone - choose the input under Options > Audio/MIDI Settings "
-                                             "(un-mute the input there if JUCE muted it)."
-                                          : "Plug-in - audio passes through unchanged.");
+      << (proc.isStandalone() ? "Standalone - with 'Audio Input', choose the device under Options > Audio/MIDI Settings."
+                              : "Plug-in - listens to the track it is inserted on; audio passes through unchanged.");
     info.setText(s, juce::dontSendNotification);
 }
 
-void SettingsPanel::paint(juce::Graphics& g)
-{
-    g.fillAll(colours::bg.withAlpha(0.75f));
-    auto card = getLocalBounds().withSizeKeepingCentre(juce::jmin(560, getWidth() - 40), juce::jmin(560, getHeight() - 40)).toFloat();
-    g.setColour(colours::panel);
-    g.fillRoundedRectangle(card, 10.0f);
-    g.setColour(colours::accent.withAlpha(0.6f));
-    g.drawRoundedRectangle(card, 10.0f, 1.0f);
-}
+void SettingsPanel::paint(juce::Graphics& g) { g.fillAll(colours::panel); }
 
 void SettingsPanel::resized()
 {
-    auto r = getLocalBounds().withSizeKeepingCentre(juce::jmin(560, getWidth() - 40), juce::jmin(560, getHeight() - 40)).reduced(20);
-    close.setBounds(r.getRight() - 80, r.getY(), 80, 26);
-    outHeader.setBounds(r.removeFromTop(24));
-    auto row = r.removeFromTop(28);
-    displayLabel.setBounds(row.removeFromLeft(150)); display.setBounds(row.reduced(0, 2));
-    row = r.removeFromTop(28);
-    resolutionLabel.setBounds(row.removeFromLeft(150)); resolution.setBounds(row.reduced(0, 2));
-    vsync.setBounds(r.removeFromTop(26));
-    previewWhileOutput.setBounds(r.removeFromTop(26));
-    openOutput.setBounds(r.removeFromTop(30).withWidth(240).reduced(0, 2));
+    auto r = getLocalBounds().reduced(22, 16);
+    auto row = [&](int h) { auto x = r.removeFromTop(h); return x; };
+
+    outHeader.setBounds(row(24));
+    auto a = row(30); displayLabel.setBounds(a.removeFromLeft(150)); identify.setBounds(a.removeFromRight(140).reduced(0, 2));
+    a.removeFromRight(8); display.setBounds(a.reduced(0, 2));
+    a = row(30); resolutionLabel.setBounds(a.removeFromLeft(150)); resolution.setBounds(a.reduced(0, 2));
+    vsync.setBounds(row(26));
+    previewWhileOutput.setBounds(row(26));
+    openOutput.setBounds(row(34).withWidth(200).reduced(0, 3));
     r.removeFromTop(10);
-    midiHeader.setBounds(r.removeFromTop(24));
-    noteScenes.setBounds(r.removeFromTop(26));
-    programScenes.setBounds(r.removeFromTop(26));
-    midiLast.setBounds(r.removeFromTop(22));
-    row = r.removeFromTop(30);
-    clearMidi.setBounds(row.removeFromLeft(220).reduced(0, 2));
-    row.removeFromLeft(10);
-    factory.setBounds(row.removeFromLeft(220).reduced(0, 2));
+
+    audioHeader.setBounds(row(24));
+    a = row(30); sourceLabel.setBounds(a.removeFromLeft(150)); source.setBounds(a.reduced(0, 2));
+    sourceStatus.setBounds(row(34).withTrimmedLeft(150));
+    r.removeFromTop(8);
+
+    midiHeader.setBounds(row(24));
+    noteScenes.setBounds(row(26));
+    programScenes.setBounds(row(26));
+    midiLast.setBounds(row(22));
+    a = row(32);
+    clearMidi.setBounds(a.removeFromLeft(230).reduced(0, 2));
+    a.removeFromLeft(10);
+    factory.setBounds(a.removeFromLeft(230).reduced(0, 2));
     r.removeFromTop(10);
-    infoHeader.setBounds(r.removeFromTop(24));
+
+    infoHeader.setBounds(row(24));
     info.setBounds(r);
+}
+
+SettingsWindow::SettingsWindow(DaliVisualProcessor& p, juce::LookAndFeel& lnf, juce::Component* centreOn)
+    : juce::DocumentWindow("Dali Visual - Settings", colours::panel, juce::DocumentWindow::closeButton, true)
+{
+    setLookAndFeel(&lnf);
+    setUsingNativeTitleBar(true);
+    setContentOwned(new SettingsPanel(p), true);
+    setResizable(false, false);
+    show(centreOn);
+}
+
+void SettingsWindow::show(juce::Component* centreOn)
+{
+    if (auto* panel = dynamic_cast<SettingsPanel*>(getContentComponent())) panel->refresh();
+    if (centreOn != nullptr) centreAroundComponent(centreOn, getWidth(), getHeight());
+    setAlwaysOnTop(true);
+    setVisible(true);
+    toFront(true);
 }
 } // namespace dali

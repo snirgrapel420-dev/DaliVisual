@@ -54,12 +54,14 @@ private:
     std::vector<float> mag, prevLogMag;
 
     int binLowA = 1, binLowB = 6, binKickA = 1, binKickB = 3, binMidB = 60, binHighB = 700;
+    int binSnareA = 8, binSnareB = 170, binHatA = 256;
 
     Agc agcRms, agcLow, agcMid, agcHigh, agcSide;
-    double fluxRef = 1e-3;
-    double fastDb = -100, slowDb = -100, prevKickDb = -100, kickAvg = -100;
+    double fluxRef = 1e-3, hatRef = 1e-3;
+    double sinceKick = 0.0, sinceDrop = 100.0;   // seconds of *non-silent* audio
+    double fastDb = -100, slowDb = -100, prevKickDb = -100, kickAvg = -100, snAvg = -100, kickPeak = -70.0;
 
-    OnsetDetector kickDet, onsetDet;
+    OnsetDetector kickDet, onsetDet, snareDet, hatDet;
     BeatTracker beat;
 
     AudioFeatures f;

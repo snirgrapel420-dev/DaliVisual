@@ -16,10 +16,37 @@ DaliVisualProcessor::DaliVisualProcessor()
 
     // Fresh instance: start from the Init preset's modulation (bass breathing on Macro A).
     matrix.addRoute(dali::ModSource::Bass, dali::ModulationTarget::fromParamId(dali::params::id::macroA), 0.25f);
+
+    // Standalone on Windows listens to what the computer plays by default.
+    setInputSource(canCaptureSystemAudio() ? SystemAudio : AudioInput);
+}
+
+void DaliVisualProcessor::setInputSource(int source)
+{
+    const int s = (source == SystemAudio && canCaptureSystemAudio()) ? SystemAudio : AudioInput;
+    inputSource.store(s);
+    if (s == SystemAudio)
+    {
+        analyzer.setSource(dali::AudioAnalyzer::Source::External);
+        loopback.start();
+    }
+    else
+    {
+        loopback.stop();
+        analyzer.setSource(dali::AudioAnalyzer::Source::Host);
+    }
+}
+
+juce::String DaliVisualProcessor::getInputSourceStatus() const
+{
+    if (inputSource.load() == SystemAudio) return loopback.getStatus();
+    if (isStandalone()) return "Audio input (Options > Audio/MIDI Settings)";
+    return "Track audio from the host";
 }
 
 DaliVisualProcessor::~DaliVisualProcessor()
 {
+    loopback.stop();
     output.close();
 }
 
@@ -118,6 +145,7 @@ juce::ValueTree DaliVisualProcessor::captureState(bool includeGlobal) const
     {
         st.appendChild(midi.toValueTree(), nullptr);
         st.setProperty("preset", presets.getCurrentName(), nullptr);
+        st.setProperty("inputSource", inputSource.load(), nullptr);
     }
     return st;
 }
@@ -159,6 +187,7 @@ void DaliVisualProcessor::applyState(const juce::ValueTree& st)
     const auto m = st.getChildWithName(dali::MidiMapper::treeId);
     if (m.isValid()) midi.fromValueTree(m);
     if (st.hasProperty("preset")) presets.setCurrentName(st.getProperty("preset").toString());
+    if (st.hasProperty("inputSource")) setInputSource(int(st.getProperty("inputSource")));
 }
 
 void DaliVisualProcessor::getStateInformation(juce::MemoryBlock& destData)

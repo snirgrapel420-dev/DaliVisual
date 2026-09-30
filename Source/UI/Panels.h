@@ -4,6 +4,7 @@
 // ============================================================================
 #include "ParamControls.h"
 #include "DaliLookAndFeel.h"
+#include "Chrome.h"
 
 namespace dali
 {
@@ -46,13 +47,17 @@ public:
     int preferredHeight(int width) override;
     void resized() override;
 private:
+    class SceneTile;
     void parameterChanged(const juce::String&, float) override { triggerAsyncUpdate(); }
     void handleAsyncUpdate() override;
     DaliVisualProcessor& proc;
-    SectionLabel sceneHeader { "Scene" }, macroHeader { "Scene Parameters" }, globalHeader { "Global" };
-    juce::OwnedArray<juce::TextButton> sceneButtons;
-    juce::Label description;
-    ParamKnob macroA, macroB, macroC, macroD, intensity, speed;
+    SectionLabel sceneHeader { "Scenes" }, macroHeader { "Scene Controls" }, motionHeader { "Motion & Energy" },
+                 autoHeader { "Auto Pilot" };
+    juce::OwnedArray<SceneTile> tiles;
+    juce::Label description, autoHint;
+    ParamKnob macroA, macroB, macroC, macroD, intensity, speed, drive, idle, dynamics;
+    ParamCombo autoMode, autoBars;
+    ParamToggle autoOnDrop;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -65,7 +70,9 @@ public:
 private:
     void timerCallback() override;
     DaliVisualProcessor& proc;
-    SectionLabel inputHeader { "Analysis" }, reactHeader { "Reaction" }, syncHeader { "Sync" };
+    SectionLabel sourceHeader { "Audio Source" }, inputHeader { "Analysis" }, reactHeader { "Reaction" }, syncHeader { "Sync" };
+    SourceCombo source;
+    juce::Label sourceStatus;
     ParamKnob sensitivity, smoothing, bass, mid, high, transient, internalBpm;
     ParamCombo syncSource, syncDiv;
     juce::Label syncSourceLabel, syncDivLabel, readout;

@@ -92,15 +92,13 @@ bool PresetManager::remove(const juce::String& name)
 void PresetManager::installFactoryPresets(bool overwrite)
 {
     // Installed once per factory-set version, so presets the user deletes stay deleted.
-    const auto marker = getPresetFolder().getChildFile(".factory_v1");
+    // Installed once per factory-set version (v2 updates the factory presets once, adds new
+    // ones); user presets are never touched, and deleted factory presets stay deleted.
+    const auto marker = getPresetFolder().getChildFile(".factory_v2");
     if (!overwrite && marker.existsAsFile()) return;
     getPresetFolder().createDirectory();
-    for (auto& p : createFactoryPresets())
-    {
-        auto f = fileFor(p.name);
-        if (overwrite || !f.existsAsFile()) p.writeTo(f);
-    }
-    marker.replaceWithText("Dali Visual factory presets v1");
+    for (auto& p : createFactoryPresets()) p.writeTo(fileFor(p.name));
+    marker.replaceWithText("Dali Visual factory presets v2");
     refresh();
 }
 } // namespace dali

@@ -19,6 +19,12 @@ struct AudioFeatures
     float kick = 0;                            // kick envelope (1 on kick, decays)
     float transient = 0;                       // transient envelope
     float onset = 0;                           // onset pulse envelope
+    float snare = 0;                           // snare / clap envelope (mid-band noise hits)
+    float hat = 0;                             // hi-hat envelope (high-band hits)
+    // musical structure
+    float build = 0;                           // 0..1 rises through breakdowns / build-ups (no kick)
+    float drop = 0;                            // 1 when the kick returns after a breakdown, decays ~1.5 s
+    float activity = 0;                        // 0 = silence, 1 = music playing (smoothed gate)
     // spectral
     float centroid = 0;                        // log-frequency position 0..1
     float flux = 0;                            // normalised spectral flux
@@ -33,6 +39,9 @@ struct AudioFeatures
     std::uint32_t beatCount = 0;               // increments on each detected beat
     std::uint32_t kickCount = 0;
     std::uint32_t onsetCount = 0;
+    std::uint32_t snareCount = 0;
+    std::uint32_t hatCount = 0;
+    std::uint32_t dropCount = 0;
     // bookkeeping
     double streamTime = 0;                     // seconds of audio analysed
     bool   silent = true;

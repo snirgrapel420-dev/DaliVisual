@@ -25,6 +25,9 @@ public:
     void open(int displayIndex = -1);
     void close();
     void toggle() { isOpen() ? close() : open(); }
+
+    /** Shows a large number on every connected display for ~2.5 s (like a projector setup). */
+    void identifyDisplays();
     bool isOpen() const noexcept { return window != nullptr; }
 
     /** Message thread. Sinks must outlive their registration. */
@@ -33,6 +36,8 @@ public:
 
 private:
     class OutputWindow;
+    class IdentifyWindow;
+    juce::OwnedArray<juce::Component> identifyWindows;
     EngineState& state;
     std::unique_ptr<OutputWindow> window;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OutputManager)

@@ -60,6 +60,8 @@ struct Telemetry
     std::atomic<float> beatPulse { 0 };
     std::atomic<float> cpuLoad { 0 };                // audio callback load 0..1
     std::atomic<bool>  outputActive { false };
+    std::atomic<float> activity { 0 };               // 0 = silence / no signal, 1 = music playing
+    std::atomic<std::int64_t> barCount { 0 };        // musical bars elapsed (drives Auto Pilot)
     juce::String       rendererInfo;                 // written once by GL thread under lock
     juce::SpinLock     infoLock;
 };
