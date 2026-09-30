@@ -8,7 +8,7 @@ namespace
 {
 juce::StringArray allTemplateIds()
 {
-    juce::StringArray ids { params::id::tplEnable, params::id::tplMode, params::id::tplBlend, "tplMirror", "tplKaleido" };
+    juce::StringArray ids { params::id::imgMode, params::id::tplEnable, params::id::tplMode, params::id::tplBlend, "tplMirror", "tplKaleido" };
     ids.addArray(params::templateParamIds());
     return ids;
 }
@@ -92,11 +92,12 @@ void TemplateGenerator::addReactiveRoutes(ModulationMatrix& m)
         sl.attackMs = attack; sl.releaseMs = release;
         m.setSlot(slot, sl);
     };
-    route(ModSource::Bass,      "tplScale",    0.12f, 5.0f, 180.0f);
-    route(ModSource::Kick,      "tplSymCount", 0.10f, 0.0f, 120.0f);
-    route(ModSource::Mid,       "tplWarp",     0.30f, 20.0f, 200.0f);
-    route(ModSource::High,      "tplDetail",   0.25f, 5.0f, 90.0f);
-    route(ModSource::Transient, "tplFeedback", 0.25f, 0.0f, 250.0f);
-    route(ModSource::SyncLFO,   "tplRotation", 0.06f, 0.0f, 0.0f);
+    // sound-driven only (no tempo LFOs): the image follows what is actually playing
+    route(ModSource::Bass,      "tplScale",    -0.10f, 5.0f, 180.0f);    // bass pushes the image towards you
+    route(ModSource::Kick,      "tplSymCount",  0.08f, 0.0f, 120.0f);
+    route(ModSource::Mid,       "tplWarp",      0.30f, 20.0f, 200.0f);
+    route(ModSource::HiHat,     "tplEdge",      0.35f, 0.0f, 80.0f);
+    route(ModSource::Snare,     "tplFeedback",  0.25f, 0.0f, 250.0f);
+    route(ModSource::Centroid,  "tplRotation",  0.08f, 60.0f, 400.0f);
 }
 } // namespace dali

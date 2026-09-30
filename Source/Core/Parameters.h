@@ -42,7 +42,7 @@ namespace id
 {
     inline const juce::String scene = "scene", intensity = "intensity", speed = "speed",
         macroA = "macroA", macroB = "macroB", macroC = "macroC", macroD = "macroD",
-        audioDrive = "audioDrive", idleMotion = "idleMotion", dynamics = "dynamics",
+        audioDrive = "audioDrive", idleMotion = "idleMotion", dynamics = "dynamics", bloom = "bloom",
         autoPilot = "autoPilot", autoBars = "autoBars", autoOnDrop = "autoOnDrop",
         sensitivity = "sensitivity", smoothing = "smoothing",
         reactBass = "reactBass", reactMid = "reactMid", reactHigh = "reactHigh", reactTransient = "reactTransient",
@@ -50,7 +50,7 @@ namespace id
         palette = "palette", hue = "hue", saturation = "saturation", brightness = "brightness", contrast = "contrast",
         colorAmount = "colorAmount", colorShift = "colorShift", audioColor = "audioColor",
         customHueA = "customHueA", customHueB = "customHueB",
-        tplEnable = "tplEnable", tplMode = "tplMode", tplBlend = "tplBlend", tplMix = "tplMix";
+        tplEnable = "tplEnable", imgMode = "imgMode", tplMode = "tplMode", tplBlend = "tplBlend", tplMix = "tplMix";
 
     inline juce::String fxOn (const char* fx) { return juce::String("fx_") + fx + "_on"; }
     inline juce::String fxAmt(const char* fx) { return juce::String("fx_") + fx + "_amt"; }

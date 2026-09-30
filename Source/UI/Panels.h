@@ -125,11 +125,11 @@ private:
     DaliVisualProcessor& proc;
     SectionLabel paletteHeader { "Palette" }, gradeHeader { "Colour" }, customHeader { "Custom Palette" };
     juce::OwnedArray<Swatch> swatches;
-    ParamKnob hue, saturation, brightness, contrast, colorAmount, colorShift, audioColor, customA, customB;
+    ParamKnob hue, saturation, brightness, contrast, colorAmount, colorShift, audioColor, bloom, customA, customB;
 };
 
 // ---------------------------------------------------------------------------------------------
-class ImagePanel : public PanelBase, private juce::ChangeListener
+class ImagePanel : public PanelBase, private juce::ChangeListener, private juce::Timer
 {
 public:
     explicit ImagePanel(DaliVisualProcessor& p);
@@ -140,12 +140,25 @@ public:
     void mouseUp(const juce::MouseEvent&) override;
 private:
     void changeListenerCallback(juce::ChangeBroadcaster*) override { repaint(); status.setText(proc.image.getStatus(), juce::dontSendNotification); }
+    void timerCallback() override;
     void chooseImage();
     void saveTemplate();
     void loadTemplate();
+    void showImageScene();
 
     DaliVisualProcessor& proc;
-    SectionLabel sourceHeader { "Source Image" }, templateHeader { "Template" }, structureHeader { "Structure" };
+    SectionLabel sourceHeader { "Image Reactor" }, modeHeader { "Visual Mode" }, controlHeader { "Image Controls" },
+                 overlayHeader { "Overlay On Another Scene (advanced)" };
+    juce::Label hint, status;
+    juce::Rectangle<int> dropZone;
+    juce::TextButton loadBtn { "Load Image" }, clearBtn { "Clear" }, showBtn { "SHOW IMAGE VISUAL" },
+                     saveTpl { "Save" }, loadTpl { "Load" }, resetTpl { "Reset" }, routesBtn { "Audio Routes" };
+    juce::OwnedArray<juce::TextButton> modeButtons;
+    juce::OwnedArray<ParamKnob> knobs, overlayKnobs;
+    ParamToggle overlay, mirror, kaleido;
+    ParamCombo overlayMode, blend;
+    std::unique_ptr<juce::FileChooser> chooser;
+};
     juce::Rectangle<int> dropZone;
     juce::Label status;
     juce::TextButton loadBtn { "Load Image" }, clearBtn { "Clear" }, saveTpl { "Save Template" },

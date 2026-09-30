@@ -75,12 +75,13 @@ bool DaliVisualEditor::keyPressed(const juce::KeyPress& k)
     if (code == 'F' || code == 'f') { proc.output.toggle(); return true; }
     if (k == juce::KeyPress::tabKey) { setPanelVisible(!panelVisible); return true; }
     if (k == juce::KeyPress::escapeKey && proc.output.isOpen()) { proc.output.close(); return true; }
-    if (code >= '1' && code <= '8')
+    if (code >= '0' && code <= '9')                       // 1-9 = scenes 1-9, 0 = scene 10
     {
+        const int sceneIndex = code == '0' ? 9 : code - '1';
         if (auto* prm = proc.apvts.getParameter(dali::params::id::scene))
         {
             prm->beginChangeGesture();
-            prm->setValueNotifyingHost(prm->convertTo0to1(float(code - '1')));
+            prm->setValueNotifyingHost(prm->convertTo0to1(float(sceneIndex)));
             prm->endChangeGesture();
         }
         return true;
@@ -101,8 +102,13 @@ void DaliVisualEditor::filesDropped(const juce::StringArray& files, int, int)
         const juce::File f(path);
         if (dali::ImageProcessor::isSupportedFile(f) && proc.image.loadFile(f))
         {
-            if (auto* prm = proc.apvts.getParameter(dali::params::id::tplEnable))
-                if (prm->getValue() < 0.5f) prm->setValueNotifyingHost(1.0f);
+            // the image becomes the visual itself: switch to the Image Reactor scene
+            if (auto* prm = proc.apvts.getParameter(dali::params::id::scene))
+            {
+                prm->beginChangeGesture();
+                prm->setValueNotifyingHost(prm->convertTo0to1(float(dali::kImageSceneIndex)));
+                prm->endChangeGesture();
+            }
             if (!panelVisible) setPanelVisible(true);
             tabs.setCurrentTabIndex(ImageTab);
             return;

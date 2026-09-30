@@ -58,7 +58,9 @@ private:
     void updateAnalysis(double now, float dt);
     void updateModulation(float dt);
     void uploadImageIfChanged();
+    void uploadSpectrum(const AudioFeatures& f, bool silent);
     void renderScene(VisualScene& sc, int w, int h);
+    void setImageUniforms(Shader& s);
     void setCommon(Shader& s, int w, int h);
     void drawFullscreen();
     static void bindTexture(int unit, unsigned int tex);
@@ -79,8 +81,10 @@ private:
     Shader templateLayer, templateComposite, outputShader, crossfade;
     PingPong templateHistory;
     RenderTarget composite, fadeTarget, fxA, fxB, finalTarget;
-    unsigned int dnaTex = 0, colorTex = 0;
-    float imgAspect = 1.0f;
+    unsigned int dnaTex = 0, colorTex = 0, spectrumTex = 0;
+    std::array<float, 256> spectrumData {};              // 128 x 2 (spectrum row, waveform row)
+    double bassTime = 0.0, midTime = 0.0, highTime = 0.0, levelTime = 0.0;
+    float imgAspect = 1.0f, imgMask = 0.0f;
     std::uint32_t dnaVersion = 0xffffffffu;
     bool hasImage = false;
     int currentScene = -1, fadeFromScene = -1;
@@ -120,7 +124,7 @@ private:
     int pScene, pIntensity, pSpeed, pMacro[4], pSensitivity, pSmoothing, pReact[4], pSyncSource, pSyncDiv,
         pInternalBpm, pPalette, pHue, pSat, pBright, pContrast, pColorAmount, pColorShift, pAudioColor,
         pCustomA, pCustomB, pTplEnable, pTplMode, pTplBlend, pTplMix, pTplMirror, pTplKaleido,
-        pTplRotation, pTplMotion, pAudioDrive, pIdleMotion, pDynamics, pAutoPilot, pAutoBars, pAutoOnDrop;
+        pTplRotation, pTplMotion, pAudioDrive, pIdleMotion, pDynamics, pAutoPilot, pAutoBars, pAutoOnDrop, pBloom, pImgMode;
     std::vector<std::pair<const char*, int>> tplUniforms;   // uniform name → param index
     std::vector<int> pFxOn, pFxAmt, pFxP2;
 

@@ -31,7 +31,8 @@ RenderEngine::RenderEngine(EngineState& s, juce::OpenGLContext& c, Role r)
     pTplEnable = I(id::tplEnable); pTplMode = I(id::tplMode); pTplBlend = I(id::tplBlend); pTplMix = I(id::tplMix);
     pTplMirror = I("tplMirror"); pTplKaleido = I("tplKaleido"); pTplRotation = I("tplRotation"); pTplMotion = I("tplMotion");
     pAudioDrive = I(id::audioDrive); pIdleMotion = I(id::idleMotion); pDynamics = I(id::dynamics);
-    pAutoPilot = I(id::autoPilot); pAutoBars = I(id::autoBars); pAutoOnDrop = I(id::autoOnDrop);
+    pAutoPilot = I(id::autoPilot); pAutoBars = I(id::autoBars); pAutoOnDrop = I(id::autoOnDrop); pBloom = I(id::bloom); pImgMode = I(id::imgMode);
+    jassert(juce::String(sceneLibrary()[size_t(kImageSceneIndex)].id) == "image");
     autoTargetIndex[0] = modTargetOf(pMacro[0]); autoTargetIndex[1] = modTargetOf(pMacro[1]);
     autoTargetIndex[2] = modTargetOf(pMacro[2]); autoTargetIndex[3] = modTargetOf(pMacro[3]);
     autoTargetIndex[4] = modTargetOf(pColorShift);
@@ -88,6 +89,14 @@ void RenderEngine::newOpenGLContextCreated()
     glGenVertexArrays(1, &vao);
     vertexSrc = Shader::resource("fullscreen_vert");
 
+    glGenTextures(1, &spectrumTex);                         // 128 x 2: spectrum + waveform for every scene
+    glBindTexture(GL_TEXTURE_2D, spectrumTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 128, 2, 0, GL_RED, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
     juce::StringArray errors;
     auto check = [&](Shader& s, bool ok) { if (!ok) errors.add(s.getName() + ": " + s.getError()); };
 
@@ -139,7 +148,8 @@ void RenderEngine::openGLContextClosing()
     templateHistory.release(); composite.release(); fadeTarget.release(); fxA.release(); fxB.release(); finalTarget.release();
     if (dnaTex != 0)   glDeleteTextures(1, &dnaTex);
     if (colorTex != 0) glDeleteTextures(1, &colorTex);
-    dnaTex = colorTex = 0;
+    if (spectrumTex != 0) glDeleteTextures(1, &spectrumTex);
+    dnaTex = colorTex = spectrumTex = 0;
     hasImage = false;
     if (vao != 0) glDeleteVertexArrays(1, &vao);
     vao = 0;
@@ -183,6 +193,15 @@ void RenderEngine::updateAnalysis(double now, float dt)
     au.hat          = smoothTo(au.hat,          f.hat * rh,         dt, fast);
     au.build        = smoothTo(au.build,        f.build,            dt, tau);
     au.drop         = smoothTo(au.drop,         f.drop,             dt, fast);
+
+    uploadSpectrum(f, stale);
+
+    // band times: each clock only runs while its band sounds (Synesthesia-style)
+    const double spd = effective(pSpeed);
+    bassTime  = std::fmod(bassTime  + dt * spd * activity * (0.08 + 1.6 * au.bass),   10000.0);
+    midTime   = std::fmod(midTime   + dt * spd * activity * (0.08 + 1.4 * au.mid),    10000.0);
+    highTime  = std::fmod(highTime  + dt * spd * activity * (0.08 + 1.4 * au.high),   10000.0);
+    levelTime = std::fmod(levelTime + dt * spd * activity * (0.08 + 1.5 * au.energy), 10000.0);
 
     DetectedTiming det;
     det.bpm = f.bpm; det.confidence = f.bpmConfidence; det.beatPhase = f.beatPhase; det.stamp = snap.stamp;
@@ -293,8 +312,24 @@ void RenderEngine::uploadImageIfChanged()
     upload(dnaTex, dna->dna);
     upload(colorTex, dna->color);
     imgAspect = dna->aspect;
+    imgMask = dna->hasAlpha ? 1.0f : 0.0f;
     hasImage = true;
     templateHistory.clear();
+}
+
+void RenderEngine::uploadSpectrum(const AudioFeatures& f, bool silent)
+{
+    // spectrum rows are already attack/release smoothed by the analyzer; ease further per frame
+    for (int i = 0; i < 128; ++i)
+    {
+        const float target = silent ? 0.0f : f.spectrum[size_t(i)];
+        float& v = spectrumData[size_t(i)];
+        v += (target - v) * (target > v ? 0.85f : 0.25f);
+        spectrumData[size_t(128 + i)] = silent ? 0.0f : f.wave[size_t(i)];
+    }
+    glBindTexture(GL_TEXTURE_2D, spectrumTex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 128, 2, GL_RED, GL_FLOAT, spectrumData.data());
 }
 
 // =============================================================================
@@ -319,6 +354,9 @@ void RenderEngine::setCommon(Shader& s, int w, int h)
     s.set("uBeat", clock.beatPulse() * activity);
     s.set("uSnare", au.snare); s.set("uHat", au.hat); s.set("uBuild", au.build); s.set("uDrop", au.drop);
     s.set("uActivity", activity);
+    s.set("uBassTime", float(bassTime)); s.set("uMidTime", float(midTime));
+    s.set("uHighTime", float(highTime)); s.set("uLevelTime", float(levelTime));
+    s.set("uSpectrum", 5);
     s.set("uCentroid", au.centroid); s.set("uFlux", au.flux); s.set("uWidth", au.width); s.set("uPan", au.pan);
     s.set("uBeatPhase", clock.beatPhase()); s.set("uBarPhase", clock.barPhase()); s.set("uSyncPhase", clock.syncPhase());
     s.set("uBeatClock", float(std::fmod(clock.beatClock(), 256.0)));
@@ -328,6 +366,20 @@ void RenderEngine::setCommon(Shader& s, int w, int h)
     s.set("uTex", 0); s.set("uPrev", 1); s.set("uDNA", 2); s.set("uImgColor", 3); s.set("uLayer", 4);
 }
 
+void RenderEngine::setImageUniforms(Shader& s)
+{
+    // the Image Reactor scene renders the loaded image itself, with the image parameters
+    for (auto& [uniform, index] : tplUniforms) s.set(uniform, effective(index));
+    s.set("uTAngle", float(effective(pTplRotation) * juce::MathConstants<double>::twoPi));
+    s.set("uImgMotion", effective(pTplMotion));
+    s.set("uImgMode", choice(pImgMode));
+    s.set("uImgAspect", imgAspect);
+    s.set("uImgMask", imgMask);
+    s.set("uHasImage", hasImage ? 1.0f : 0.0f);
+    bindTexture(2, hasImage ? dnaTex : 0u);
+    bindTexture(3, hasImage ? colorTex : 0u);
+}
+
 void RenderEngine::renderScene(VisualScene& sc, int w, int h)
 {
     if (sc.history.ensure(w, h)) sc.history.clear();
@@ -335,6 +387,7 @@ void RenderEngine::renderScene(VisualScene& sc, int w, int h)
     auto& prev = sc.history.previous();
     target.bind();
     setCommon(sc.shader, w, h);
+    if (&sc == scenes[size_t(kImageSceneIndex)].get()) setImageUniforms(sc.shader);
     bindTexture(0, prev.texture());
     bindTexture(1, prev.texture());
     drawFullscreen();
@@ -399,6 +452,7 @@ void RenderEngine::renderOpenGL()
     uploadImageIfChanged();
 
     glBindVertexArray(vao);
+    bindTexture(5, spectrumTex);
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_SCISSOR_TEST);
@@ -441,7 +495,7 @@ void RenderEngine::renderOpenGL()
     }
 
     // ---- 2. image template layer ------------------------------------------------------------------
-    if (hasImage && flag(pTplEnable) && templateLayer.isValid() && templateComposite.isValid())
+    if (hasImage && flag(pTplEnable) && currentScene != kImageSceneIndex && templateLayer.isValid() && templateComposite.isValid())
     {
         if (templateHistory.ensure(w, h)) templateHistory.clear();
         templateHistory.current().bind();
@@ -523,9 +577,15 @@ void RenderEngine::renderOpenGL()
         outputShader.set("uBrightness", effective(pBright));
         outputShader.set("uContrast", effective(pContrast));
         outputShader.set("uDynamics", effective(pDynamics));
+        outputShader.set("uBloom", effective(pBloom));
         bindTexture(0, src);
         drawFullscreen();
     };
+
+    // bloom reads the mip chain of the final image
+    bindTexture(0, src);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
 
     const bool publisher = (role == Role::Output) || !outputActive;
     bool haveSinks = false;
@@ -543,7 +603,10 @@ void RenderEngine::renderOpenGL()
     glViewport(0, 0, physW, physH);
     runOutput(physW, physH);
 
-    bindTexture(4, 0); bindTexture(3, 0); bindTexture(2, 0); bindTexture(1, 0); bindTexture(0, 0);
+    bindTexture(0, src);                                  // other passes sample it at level 0 only
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    bindTexture(5, 0); bindTexture(4, 0); bindTexture(3, 0); bindTexture(2, 0); bindTexture(1, 0); bindTexture(0, 0);
     glBindVertexArray(0);
     glUseProgram(0);
 

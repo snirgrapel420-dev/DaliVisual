@@ -3,6 +3,7 @@
 //  AudioFeatures — one analysis snapshot (framework independent).
 //  All "normalised" values are 0..1 after adaptive gain control.
 // ============================================================================
+#include <array>
 #include <cstdint>
 
 namespace dali
@@ -42,6 +43,11 @@ struct AudioFeatures
     std::uint32_t snareCount = 0;
     std::uint32_t hatCount = 0;
     std::uint32_t dropCount = 0;
+    // full picture of the sound for the GPU (uploaded as a 128x2 texture)
+    static constexpr int kSpectrumBands = 128;
+    static constexpr int kWaveSamples = 128;
+    std::array<float, kSpectrumBands> spectrum {};   // log-spaced 30 Hz .. 16 kHz, 0..1 (pink-weighted, auto-levelled)
+    std::array<float, kWaveSamples> wave {};         // latest waveform (mono), -1..1 auto-levelled
     // bookkeeping
     double streamTime = 0;                     // seconds of audio analysed
     bool   silent = true;

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 // ============================================================================
 //  FeatureExtractor — the analysis DSP. Framework independent, allocation-free
 //  after prepare(). Runs on the analysis thread (never on the audio thread).
@@ -64,6 +65,10 @@ private:
     OnsetDetector kickDet, onsetDet, snareDet, hatDet;
     BeatTracker beat;
 
+    std::array<float, AudioFeatures::kSpectrumBands + 1> bandEdge {};   // fractional FFT bin of each band edge
+    std::array<float, AudioFeatures::kSpectrumBands> bandTilt {};       // pink weighting (+3 dB/oct around 1 kHz)
+    double specRefDb = -60.0;
+    float wavePeak = 1e-3f;
     AudioFeatures f;
     float sensitivity = 1.0f;
     int   silentHops = 0;

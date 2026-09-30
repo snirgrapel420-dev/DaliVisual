@@ -16,9 +16,14 @@ struct SceneInfo
     const char* description;
 };
 
-inline const std::array<SceneInfo, 8>& sceneLibrary()
+inline const std::array<SceneInfo, 17>& sceneLibrary();
+
+/** Index of the Image Reactor scene (the scene that renders the loaded image itself). */
+constexpr int kImageSceneIndex = 16;
+
+inline const std::array<SceneInfo, 17>& sceneLibrary()
 {
-    static const std::array<SceneInfo, 8> s { {
+    static const std::array<SceneInfo, 17> s { {
         { "kinetic",  "01  KINETIC KALEIDO",   "scene_01_kinetic_kaleido_frag",  { "Segments", "Fold Complexity", "Rotation", "Mirror Feedback" },
           "Kaleidoscopic folding geometry. Kick scale pulses, bass deforms, beat-locked segment rotation." },
         { "organic",  "02  ORGANIC FLUX",      "scene_02_organic_flux_frag",     { "Warp Depth", "Detail", "Flow", "Folds" },
@@ -35,6 +40,24 @@ inline const std::array<SceneInfo, 8>& sceneLibrary()
           "Growing neural network: nodes, synaptic pulses, transient bursts and sparks." },
         { "void",     "08  PSYCHEDELIC VOID",  "scene_08_psychedelic_void_frag", { "Particle Density", "Nebula", "Depth Speed", "Chromatic" },
           "Dark infinite depth, particle fields and fractal nebula with chromatic distortion." },
+        { "kali",     "09  KALI CATHEDRAL",    "scene_09_kali_cathedral_frag",    { "Fold Twist", "Complexity", "Flight Speed", "Glow" },
+          "Flight through a raymarched fractal cathedral. Bass drives the flight, kicks ignite the walls, the spectrum colours the architecture." },
+        { "mandala",  "10  SPECTRAL MANDALA",  "scene_10_spectral_mandala_frag",  { "Symmetry", "Petal Depth", "Rotation", "Glow" },
+          "The sound drawn as a mandala: every petal ring is a frequency range, the waveform circles it, hits leave expanding echoes." },
+        { "julia",    "11  JULIA BLOOM",       "scene_11_julia_bloom_frag",       { "Symmetry Fold", "Detail", "Morph Speed", "Glow" },
+          "A living Julia fractal. The bass morphs its shape, every contour glows with its own frequency band." },
+        { "hyper",    "12  HYPERSPACE",        "scene_12_hyperspace_frag",        { "Twist", "Ornament Detail", "Speed", "Rings" },
+          "Tunnel of fractal ornament. Bass is the throttle, every light ring is a frequency, kicks fire shockwaves." },
+        { "oil",      "13  IRIDESCENT OIL",    "scene_13_iridescent_oil_frag",    { "Flow Scale", "Film Thickness", "Turbulence", "Gloss" },
+          "Glossy liquid with thin-film rainbow colours. Mids stir it, kicks ripple it, the spectrum shifts its colours." },
+        { "hyperbolic","14  HYPERBOLIC DREAM", "scene_14_hyperbolic_dream_frag",  { "Tiling Type", "Edge Width", "Flow Speed", "Depth Glow" },
+          "Endless hyperbolic tiling (Escher's Circle Limit). The bass slides it through hyperbolic space, tiles glow with the spectrum." },
+        { "feedback", "15  INFINITE FEEDBACK", "scene_15_infinite_feedback_frag", { "Symmetry", "Zoom", "Warp", "Trail Length" },
+          "Kaleidoscopic video feedback fed only by the sound: spectrum ring, waveform and kick flashes stream into endless trails." },
+        { "wavegeo",  "16  WAVEFORM GEOMETRY", "scene_16_waveform_geometry_frag", { "Layers", "Wave Amplitude", "Rotation", "Afterglow" },
+          "Sacred geometry drawn by the live waveform: every polygon edge is the sound, each shape a frequency range." },
+        { "image",    "17  IMAGE REACTOR",     "scene_17_image_reactor_frag",     { "Motion", "Reactivity", "Zoom", "Trails" },
+          "Your own image becomes the visual: 8 modes (kaleidoscope, liquid, tunnel, spectral slices, droste, glitch, depth 3D, neon outline) driven by the sound itself." },
     } };
     return s;
 }

@@ -29,7 +29,8 @@ public:
         const juce::String res = "thumb_" + juce::String(idx + 1).paddedLeft('0', 2) + "_jpg";
         if (const char* data = BinaryData::getNamedResource(res.toRawUTF8(), size))
             thumb = juce::ImageFileFormat::loadFrom(data, size_t(size));
-        setTooltip(juce::String(sceneLibrary()[size_t(idx)].description) + "\n(key " + juce::String(idx + 1) + ")");
+        setTooltip(juce::String(sceneLibrary()[size_t(idx)].description)
+                   + (idx < 10 ? "\n(key " + juce::String((idx + 1) % 10) + ")" : juce::String()));
     }
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
@@ -116,7 +117,8 @@ void ScenePanel::handleAsyncUpdate()
 int ScenePanel::preferredHeight(int width)
 {
     const int tileH = juce::roundToInt((width - 2 * kPad) / 2 * 9.0 / 16.0);
-    return kPad + kHeaderH + 4 * tileH + 40 + kPad + kHeaderH + kKnobH + kPad + kHeaderH + kKnobH * 2
+    const int rows = (int(sceneLibrary().size()) + 1) / 2;
+    return kPad + kHeaderH + rows * tileH + 40 + kPad + kHeaderH + kKnobH + kPad + kHeaderH + kKnobH * 2
            + kPad + kHeaderH + 30 + 26 + 34 + kPad;
 }
 
@@ -125,7 +127,7 @@ void ScenePanel::resized()
     auto r = getLocalBounds().reduced(kPad);
     sceneHeader.setBounds(r.removeFromTop(kHeaderH));
     const int tw = r.getWidth() / 2, th = juce::roundToInt(tw * 9.0 / 16.0);
-    auto grid = r.removeFromTop(th * 4);
+    auto grid = r.removeFromTop(th * ((tiles.size() + 1) / 2));
     for (int i = 0; i < tiles.size(); ++i)
         tiles[i]->setBounds(grid.getX() + (i % 2) * tw, grid.getY() + (i / 2) * th, tw, th);
     description.setBounds(r.removeFromTop(40));
@@ -527,11 +529,12 @@ ColorPanel::ColorPanel(DaliVisualProcessor& p)
       hue(p, params::id::hue, "Hue"), saturation(p, params::id::saturation, "Saturation"),
       brightness(p, params::id::brightness, "Brightness"), contrast(p, params::id::contrast, "Contrast"),
       colorAmount(p, params::id::colorAmount, "Color Amount"), colorShift(p, params::id::colorShift, "Color Shift"),
-      audioColor(p, params::id::audioColor, "Audio Color"), customA(p, params::id::customHueA, "Base Hue"),
+      audioColor(p, params::id::audioColor, "Audio Color"), bloom(p, params::id::bloom, "Bloom"),
+      customA(p, params::id::customHueA, "Base Hue"),
       customB(p, params::id::customHueB, "Highlight Hue")
 {
     for (juce::Component* c : std::initializer_list<juce::Component*> { &paletteHeader, &gradeHeader, &customHeader, &hue, &saturation, &brightness,
-                     &contrast, &colorAmount, &colorShift, &audioColor, &customA, &customB })
+                     &contrast, &colorAmount, &colorShift, &audioColor, &bloom, &customA, &customB })
         addAndMakeVisible(c);
     for (int i = 0; i < int(PaletteId::count); ++i) addAndMakeVisible(swatches.add(new Swatch(p, i)));
 }
@@ -550,7 +553,7 @@ void ColorPanel::resized()
         swatches[i]->setBounds(grid.getX() + (i % 3) * sw, grid.getY() + (i / 3) * 46, sw, 46);
     r.removeFromTop(kPad);
     gradeHeader.setBounds(r.removeFromTop(kHeaderH));
-    layoutKnobGrid({ &hue, &saturation, &brightness, &contrast, &colorAmount, &colorShift, &audioColor },
+    layoutKnobGrid({ &hue, &saturation, &brightness, &contrast, &colorAmount, &colorShift, &audioColor, &bloom },
                    r.removeFromTop(kKnobH * 2), 4, kKnobH);
     r.removeFromTop(kPad);
     customHeader.setBounds(r.removeFromTop(kHeaderH));
@@ -558,67 +561,147 @@ void ColorPanel::resized()
 }
 
 // =============================================================================
-//  IMAGE — Image Reactive Mode
+//  IMAGE — Image Reactor: the image itself becomes the visual (scene 17)
 // =============================================================================
 ImagePanel::ImagePanel(DaliVisualProcessor& p)
     : proc(p),
-      enable(p, params::id::tplEnable, "Template On"), mirror(p, "tplMirror", "Mirror"), kaleido(p, "tplKaleido", "Kaleidoscope"),
-      mode(p, params::id::tplMode), blend(p, params::id::tplBlend)
+      overlay(p, params::id::tplEnable, "Overlay on current scene"), mirror(p, "tplMirror", "Mirror"),
+      kaleido(p, "tplKaleido", "Kaleidoscope"), overlayMode(p, params::id::tplMode), blend(p, params::id::tplBlend)
 {
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &sourceHeader, &templateHeader, &structureHeader, &status, &loadBtn, &clearBtn,
-                     &saveTpl, &loadTpl, &resetTpl, &routesBtn, &enable, &mirror, &kaleido, &mode, &blend })
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &sourceHeader, &modeHeader, &controlHeader,
+             &overlayHeader, &hint, &status, &loadBtn, &clearBtn, &showBtn, &saveTpl, &loadTpl, &resetTpl, &routesBtn,
+             &overlay, &mirror, &kaleido, &overlayMode, &blend })
         addAndMakeVisible(c);
 
-    for (auto& id : params::templateParamIds())
-        addAndMakeVisible(knobs.add(new ParamKnob(p, id, p.apvts.getParameter(id)->getName(20).replace("Template ", ""))));
-
+    styleSmall(hint).setText("Drop a photo or logo anywhere on the plug-in: it becomes the visual itself, "
+                             "moved and coloured by the sound.", juce::dontSendNotification);
+    hint.setJustificationType(juce::Justification::topLeft);
     styleSmall(status);
     status.setJustificationType(juce::Justification::centred);
     status.setText(proc.image.getStatus(), juce::dontSendNotification);
 
+    // the 8 visual modes as quick buttons (switch them live during a set)
+    if (auto* choiceParam = dynamic_cast<juce::AudioParameterChoice*>(proc.apvts.getParameter(params::id::imgMode)))
+        for (int i = 0; i < choiceParam->choices.size(); ++i)
+        {
+            auto* b = modeButtons.add(new juce::TextButton(choiceParam->choices[i]));
+            b->onClick = [this, i]
+            {
+                if (auto* prm = proc.apvts.getParameter(params::id::imgMode))
+                {
+                    prm->beginChangeGesture();
+                    prm->setValueNotifyingHost(prm->convertTo0to1(float(i)));
+                    prm->endChangeGesture();
+                }
+                showImageScene();
+            };
+            addAndMakeVisible(b);
+        }
+
+    const std::pair<const char*, const char*> controls[] = {
+        { "tplScale", "Zoom" }, { "tplRotation", "Rotation" }, { "tplMotion", "Motion" }, { "tplSymCount", "Symmetry" },
+        { "tplWarp", "Warp" }, { "tplTwist", "Twist" }, { "tplFeedback", "Trails" }, { "tplDetail", "Detail" },
+        { "tplDepth", "Depth" }, { "tplColorExtract", "Palette Tint" }, { "tplEdge", "Outline" },
+        { "tplDistortion", "Chroma" }, { "tplReact", "Reactivity" } };
+    for (auto& [id, label] : controls) addAndMakeVisible(knobs.add(new ParamKnob(p, id, label)));
+    knobs[9]->setTooltip("0 = the image's own colours, 1 = recoloured by the palette");
+    knobs[12]->setTooltip("How strongly the image follows the sound");
+
+    const std::pair<const char*, const char*> overlayControls[] = {
+        { "tplMix", "Mix" }, { "tplSymmetry", "Symmetry" }, { "tplNoise", "Noise" }, { "tplRecursion", "Recursion" },
+        { "tplThreshold", "Threshold" }, { "tplLuminance", "Luminance" }, { "tplColorAmount", "Color" },
+        { "tplComplexity", "Complexity" } };
+    for (auto& [id, label] : overlayControls) addAndMakeVisible(overlayKnobs.add(new ParamKnob(p, id, label)));
+
+    showBtn.setClickingTogglesState(false);
+    showBtn.setTooltip("Switch to scene 17 - the image itself as the visual");
+    showBtn.onClick = [this] { showImageScene(); };
     loadBtn.onClick  = [this] { chooseImage(); };
     clearBtn.onClick = [this] { proc.image.clear(); };
     saveTpl.onClick  = [this] { saveTemplate(); };
     loadTpl.onClick  = [this] { loadTemplate(); };
     resetTpl.onClick = [this] { proc.templates.resetParameters(); };
     routesBtn.onClick = [this] { TemplateGenerator::addReactiveRoutes(proc.matrix); };
-    routesBtn.setTooltip("Adds Bass > Scale, Kick > Symmetry, Mid > Warp, High > Detail, Transient > Feedback, Sync LFO > Rotation");
+    saveTpl.setTooltip("Save image + settings as a .dvtemplate");
+    loadTpl.setTooltip("Load a .dvtemplate");
+    resetTpl.setTooltip("Reset the image controls");
+    routesBtn.setTooltip("Adds sound routes: Bass > Zoom, Kick > Symmetry, Mid > Warp, Hi-Hat > Outline, Snare > Trails, Centroid > Rotation");
     proc.image.addChangeListener(this);
+    startTimerHz(6);
 }
 
 ImagePanel::~ImagePanel() { proc.image.removeChangeListener(this); }
 
-int ImagePanel::preferredHeight(int) { return kPad * 5 + kHeaderH * 3 + 150 + 20 + 30 * 4 + ((21 + 3) / 4) * kKnobH; }
+void ImagePanel::showImageScene()
+{
+    if (auto* prm = proc.apvts.getParameter(params::id::scene))
+    {
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost(prm->convertTo0to1(float(kImageSceneIndex)));
+        prm->endChangeGesture();
+    }
+}
+
+void ImagePanel::timerCallback()
+{
+    const bool showing = juce::roundToInt(proc.apvts.getRawParameterValue(params::id::scene)->load()) == kImageSceneIndex;
+    showBtn.setToggleState(showing, juce::dontSendNotification);
+    showBtn.setButtonText(showing ? "IMAGE VISUAL IS LIVE" : "SHOW IMAGE VISUAL");
+    const int mode = juce::roundToInt(proc.apvts.getRawParameterValue(params::id::imgMode)->load());
+    for (int i = 0; i < modeButtons.size(); ++i) modeButtons[i]->setToggleState(i == mode && showing, juce::dontSendNotification);
+}
+
+int ImagePanel::preferredHeight(int)
+{
+    return kPad * 6 + kHeaderH * 4 + 36 + 140 + 20 + 30 + 36 + 2 * 30 + ((13 + 3) / 4) * kKnobH
+           + 30 + 30 + 2 * kKnobH + 32;
+}
 
 void ImagePanel::resized()
 {
     auto r = getLocalBounds().reduced(kPad);
     sourceHeader.setBounds(r.removeFromTop(kHeaderH));
-    dropZone = r.removeFromTop(150);
+    hint.setBounds(r.removeFromTop(36));
+    dropZone = r.removeFromTop(140);
     status.setBounds(r.removeFromTop(20));
     auto row = r.removeFromTop(30);
     loadBtn.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(2));
     clearBtn.setBounds(row.reduced(2));
+    showBtn.setBounds(r.removeFromTop(36).reduced(2, 3));
     r.removeFromTop(kPad);
-    templateHeader.setBounds(r.removeFromTop(kHeaderH));
+
+    modeHeader.setBounds(r.removeFromTop(kHeaderH));
+    auto grid = r.removeFromTop(2 * 30);
+    const int bw = grid.getWidth() / 4;
+    for (int i = 0; i < modeButtons.size(); ++i)
+        modeButtons[i]->setBounds(juce::Rectangle<int>(grid.getX() + (i % 4) * bw, grid.getY() + (i / 4) * 30, bw, 30).reduced(2));
+    r.removeFromTop(kPad);
+
+    controlHeader.setBounds(r.removeFromTop(kHeaderH));
+    juce::Array<juce::Component*> ks;
+    for (auto* k : knobs) ks.add(k);
+    r.removeFromTop(layoutKnobGrid(ks, r.withHeight(((knobs.size() + 3) / 4) * kKnobH), 4, kKnobH));
+    r.removeFromTop(kPad);
+
+    overlayHeader.setBounds(r.removeFromTop(kHeaderH));
     row = r.removeFromTop(30);
-    enable.setBounds(row.removeFromLeft(row.getWidth() / 3));
+    overlay.setBounds(row.removeFromLeft(row.getWidth() / 2));
     mirror.setBounds(row.removeFromLeft(row.getWidth() / 2));
     kaleido.setBounds(row);
     row = r.removeFromTop(30);
-    mode.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(2));
+    overlayMode.setBounds(row.removeFromLeft(row.getWidth() / 2).reduced(2));
     blend.setBounds(row.reduced(2));
-    row = r.removeFromTop(30);
-    const int bw = row.getWidth() / 4;
-    saveTpl.setBounds(row.removeFromLeft(bw).reduced(2));
-    loadTpl.setBounds(row.removeFromLeft(bw).reduced(2));
-    resetTpl.setBounds(row.removeFromLeft(bw).reduced(2));
-    routesBtn.setBounds(row.reduced(2));
+    juce::Array<juce::Component*> oks;
+    for (auto* k : overlayKnobs) oks.add(k);
+    r.removeFromTop(layoutKnobGrid(oks, r.withHeight(2 * kKnobH), 4, kKnobH));
     r.removeFromTop(kPad);
-    structureHeader.setBounds(r.removeFromTop(kHeaderH));
-    juce::Array<juce::Component*> ks;
-    for (auto* k : knobs) ks.add(k);
-    layoutKnobGrid(ks, r, 4, kKnobH);
+
+    row = r.removeFromTop(32);
+    const int w4 = row.getWidth() / 4;
+    saveTpl.setBounds(row.removeFromLeft(w4).reduced(2));
+    loadTpl.setBounds(row.removeFromLeft(w4).reduced(2));
+    resetTpl.setBounds(row.removeFromLeft(w4).reduced(2));
+    routesBtn.setBounds(row.reduced(2));
 }
 
 void ImagePanel::paint(juce::Graphics& g)
@@ -640,7 +723,7 @@ void ImagePanel::paint(juce::Graphics& g)
     {
         g.setColour(colours::textDim);
         g.setFont(juce::Font(juce::FontOptions(13.0f)));
-        g.drawFittedText("Drop an image or logo here\n(or anywhere on the plug-in)", dropZone, juce::Justification::centred, 2);
+        g.drawFittedText("Drop a photo or logo here\n(or anywhere on the plug-in)", dropZone, juce::Justification::centred, 2);
     }
 }
 
@@ -656,8 +739,7 @@ void ImagePanel::chooseImage()
         [this](const juce::FileChooser& fc)
         {
             const auto f = fc.getResult();
-            if (f.existsAsFile() && proc.image.loadFile(f))
-                if (auto* prm = proc.apvts.getParameter(params::id::tplEnable)) prm->setValueNotifyingHost(1.0f);
+            if (f.existsAsFile() && proc.image.loadFile(f)) showImageScene();
         });
 }
 
@@ -686,8 +768,11 @@ void ImagePanel::loadTemplate()
         [this](const juce::FileChooser& fc)
         {
             const auto f = fc.getResult();
-            if (f.existsAsFile() && !proc.templates.loadFromFile(f))
-                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Template", "Not a Dali Visual template.");
+            if (f.existsAsFile())
+            {
+                if (proc.templates.loadFromFile(f)) showImageScene();
+                else juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Template", "Not a Dali Visual template.");
+            }
         });
 }
 } // namespace dali

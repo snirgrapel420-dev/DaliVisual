@@ -52,6 +52,17 @@ void FeatureExtractor::prepare(double sampleRate)
     binMidB = bin(2500); binHighB = bin(std::min(16000.0, sr * 0.45));
     binSnareA = bin(180); binSnareB = bin(4000); binHatA = std::min(bin(7000), binHighB - 1);
 
+    // 128 log-spaced analysis bands, 30 Hz .. 16 kHz (capped below Nyquist)
+    {
+        const double fLo = 30.0, fHi = std::min(16000.0, sr * 0.45);
+        for (int i = 0; i <= AudioFeatures::kSpectrumBands; ++i)
+            bandEdge[size_t(i)] = float(fLo * std::pow(fHi / fLo, double(i) / AudioFeatures::kSpectrumBands) / binHz);
+        for (int i = 0; i < AudioFeatures::kSpectrumBands; ++i)
+        {
+            const double fc = std::sqrt(double(bandEdge[size_t(i)]) * bandEdge[size_t(i + 1)]) * binHz;
+            bandTilt[size_t(i)] = float(3.0 * std::log2(fc / 1000.0));
+        }
+    }
     kickDet.prepare(int(hopRate * 1.0));
     onsetDet.prepare(int(hopRate * 0.8));
     snareDet.prepare(int(hopRate * 0.8));
@@ -67,6 +78,7 @@ void FeatureExtractor::reset()
     agcRms = agcLow = agcMid = agcHigh = agcSide = Agc {};
     fluxRef = hatRef = 1e-3; fastDb = slowDb = prevKickDb = kickAvg = -100;
     sinceKick = 0.0; sinceDrop = 100.0; snAvg = -100; kickPeak = -70.0;
+    specRefDb = -60.0; wavePeak = 1e-3f;
     kickDet.prepare(int(hopRate * 1.0)); onsetDet.prepare(int(hopRate * 0.8));
     snareDet.prepare(int(hopRate * 0.8)); hatDet.prepare(int(hopRate * 0.5));
     beat.reset();
@@ -224,6 +236,63 @@ void FeatureExtractor::processHop(const float* left, const float* right)
     f.stereoEnergy = f.silent ? 0.0f : shape(agcSide.norm(toDb(rmsS), 36.0, 0.04));
     const float panNow = float((rmsR - rmsL) / std::max(1e-9, rmsR + rmsL));
     f.pan = follow(f.pan, panNow, coef(0.05, hopRate), coef(0.05, hopRate));
+
+    // ---- full spectrum (for the GPU) ------------------------------------------------
+    {
+        double hopMax = -120.0;
+        std::array<double, AudioFeatures::kSpectrumBands> db {};
+        const int nb = fftSize / 2;
+        for (int i = 0; i < AudioFeatures::kSpectrumBands; ++i)
+        {
+            const float lo = bandEdge[size_t(i)], hi = bandEdge[size_t(i + 1)];
+            double e;
+            if (hi - lo < 1.0f)                           // narrower than a bin: interpolate the magnitude
+            {
+                const float c = 0.5f * (lo + hi);
+                const int k = std::clamp(int(c), 0, nb - 1);
+                const float t = c - float(k);
+                const double m = mag[size_t(k)] * (1.0f - t) + mag[size_t(std::min(k + 1, nb))] * t;
+                e = m * m;
+            }
+            else
+            {
+                const int a = std::clamp(int(std::floor(lo)), 0, nb), b = std::clamp(int(std::ceil(hi)), a + 1, nb + 1);
+                double sum = 0; for (int k = a; k < b; ++k) sum += double(mag[size_t(k)]) * mag[size_t(k)];
+                e = sum / (b - a);
+            }
+            db[size_t(i)] = toDb(std::sqrt(e)) + bandTilt[size_t(i)];
+            hopMax = std::max(hopMax, db[size_t(i)]);
+        }
+        specRefDb = hopMax > specRefDb ? hopMax : std::max(hopMax, specRefDb - 0.03);   // auto-level, slow release
+        specRefDb = std::max(specRefDb, -70.0);
+        const float rel = 1.0f - coef(0.12, hopRate);
+        for (int i = 0; i < AudioFeatures::kSpectrumBands; ++i)
+        {
+            const float v = f.silent ? 0.0f : clamp01(float((db[size_t(i)] - (specRefDb - 42.0)) / 42.0) * sens);
+            float& o = f.spectrum[size_t(i)];
+            o = v > o ? v : o * rel;
+        }
+    }
+
+    // ---- waveform (oscilloscope), auto-levelled ------------------------------------------
+    {
+        float pkHop = 1e-6f;
+        for (int i = 0; i < hopSize; ++i) pkHop = std::max(pkHop, std::abs(0.5f * (left[i] + right[i])));
+        wavePeak = std::max(pkHop, wavePeak * 0.995f);
+        const int step = hopSize / AudioFeatures::kWaveSamples;
+        for (int i = 0; i < AudioFeatures::kWaveSamples; ++i)
+        {
+            // peak-preserving decimation: keep the sample with the largest |x| in each bucket
+            // (plain decimation aliases high frequencies away)
+            float m = 0.0f;
+            for (int j = 0; j < step; ++j)
+            {
+                const float x = 0.5f * (left[i * step + j] + right[i * step + j]);
+                if (std::abs(x) > std::abs(m)) m = x;
+            }
+            f.wave[size_t(i)] = f.silent ? 0.0f : std::clamp(m / wavePeak, -1.0f, 1.0f);
+        }
+    }
 
     // ---- tempo / beat -------------------------------------------------------------
     const float odf = fluxN * 0.6f + std::min(kickOdf, 2.0f) * 0.8f;

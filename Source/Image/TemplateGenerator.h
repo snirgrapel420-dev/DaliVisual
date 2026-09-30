@@ -28,9 +28,8 @@ public:
     /** Resets all template parameters to their defaults (image and enable untouched). */
     void resetParameters();
 
-    /** Adds the recommended audio routes for templates to the matrix:
-        Bass→Scale, Kick→Symmetry Count, Mid→Warp, High→Detail,
-        Transient→Feedback, Sync LFO→Rotation. */
+    /** Adds the recommended sound routes for images to the matrix:
+        Bass→Zoom, Kick→Symmetry, Mid→Warp, Hi-Hat→Outline, Snare→Trails, Centroid→Rotation. */
     static void addReactiveRoutes(ModulationMatrix& m);
 
     static inline const juce::Identifier treeId { "DaliTemplate" };

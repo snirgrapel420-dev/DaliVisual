@@ -40,6 +40,7 @@ std::vector<Def> build()
     F(id::audioDrive, "Audio Drive", 0.0f, 1.0f, 0.7f, true, "Scene");
     F(id::idleMotion, "Idle Motion", 0.0f, 1.0f, 0.0f, false, "Scene");
     F(id::dynamics, "Musical Dynamics", 0.0f, 1.0f, 0.6f, true, "Scene");
+    F(id::bloom, "Bloom", 0.0f, 1.0f, 0.45f, true, "Color");
     C(id::autoPilot, "Auto Pilot", { "Off", "Variations", "Variations + Scenes" }, 0, "Scene");
     C(id::autoBars, "Auto Pilot Every", { "2 bars", "4 bars", "8 bars", "16 bars", "32 bars" }, 2, "Scene");
     B(id::autoOnDrop, "Auto Pilot On Drop", true, "Scene");
@@ -68,7 +69,9 @@ std::vector<Def> build()
     F(id::customHueB, "Custom Highlight Hue", 0.0f, 1.0f, 0.52f, false, "Color");
 
     // --- image template --------------------------------------------------------
-    B(id::tplEnable, "Template Enable", false, "Template");
+    C(id::imgMode, "Image Visual Mode", { "Kaleidoscope", "Liquid", "Tunnel", "Spectral Slices", "Droste",
+                                          "Glitch", "Depth 3D", "Neon Outline" }, 0, "Template");
+    B(id::tplEnable, "Image Overlay On Scene", false, "Template");
     C(id::tplMode, "Template Mode", toArray(templateModeNames(), kNumTemplateModes), 0, "Template");
     C(id::tplBlend, "Template Blend", toArray(templateBlendNames(), kNumTemplateBlends), 0, "Template");
     F(id::tplMix, "Template Mix", 0.0f, 1.0f, 0.85f, true, "Template");
