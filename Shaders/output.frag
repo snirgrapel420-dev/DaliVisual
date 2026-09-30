@@ -1,5 +1,7 @@
-// Final output: global colour grade + soft highlight roll-off + dither.
+// Final output: musical dynamics (build tension / drop impact), global colour
+// grade, soft highlight roll-off and dither.
 uniform float uHue, uSaturation, uBrightness, uContrast;
+uniform float uDynamics;     // 0..1 amount of build / drop treatment
 
 vec3 hueRotate(vec3 c, float h)
 {
@@ -16,12 +18,26 @@ vec3 softClip(vec3 c)
 
 void main()
 {
-    vec3 c = texture(uTex, vUV).rgb;
+    float build = uBuild * uDynamics;
+    float drop  = uDrop * uDynamics;
+
+    // drop: zoom punch (image jumps towards the viewer and settles)
+    vec2 uv = (vUV - 0.5) * (1.0 - 0.06 * drop * drop) + 0.5;
+    // build: slow breathing tunnel pull that tightens as tension grows
+    uv = (uv - 0.5) * (1.0 - 0.025 * build * (0.5 + 0.5 * sin(uAbsTime * (2.0 + 6.0 * build)))) + 0.5;
+    vec3 c = texture(uTex, uv).rgb;
+
     c = hueRotate(c, uHue);
     float l = dot(c, vec3(0.299, 0.587, 0.114));
-    c = mix(vec3(l), c, uSaturation);
-    c *= uBrightness;
-    c = (c - 0.5) * uContrast + 0.5;
+    // tension drains colour and focuses the frame; the drop floods it back over-saturated
+    float sat = uSaturation * (1.0 - 0.45 * build) * (1.0 + 0.35 * drop);
+    c = mix(vec3(l), c, sat);
+    c *= uBrightness * (1.0 + 0.55 * drop * drop);
+    c = (c - 0.5) * uContrast * (1.0 + 0.25 * build) + 0.5;
+    // build vignette closes in; drop adds a short white flash
+    vec2 p = vUV - 0.5;
+    c *= 1.0 - build * 0.55 * smoothstep(0.15, 0.75, length(p * vec2(uRes.x / uRes.y, 1.0)));
+    c += vec3(0.12 * pow(drop, 4.0)) * (0.3 + l);
     c = softClip(max(c, 0.0));
     c += (hash12(gl_FragCoord.xy + fract(uAbsTime) * 91.0) - 0.5) / 255.0;
     fragColor = vec4(clamp(c, 0.0, 1.0), 1.0);

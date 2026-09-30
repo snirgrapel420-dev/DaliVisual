@@ -282,6 +282,106 @@ static void testExtractorCost()
                 ms * 1000.0 / hops, ms / 10000.0 * 100.0);
 }
 
+// ---------------------------------------------------------------------------
+//  v2: snare / hi-hat detection, build & drop, activity gate
+// ---------------------------------------------------------------------------
+struct DrumTrack { std::vector<float> L, R; int snares = 0, hats = 0, kicks = 0; };
+
+// kick on 1 & 3, snare on 2 & 4, closed hat on every 8th.
+static void addDrums(DrumTrack& t, double bpm, double t0, double t1, double sr, bool kick, bool snare, bool hats,
+                     bool riser, unsigned seed)
+{
+    std::mt19937 rng(seed); std::uniform_real_distribution<float> U(-1.0f, 1.0f);
+    const double beat = 60.0 / bpm;
+    const size_t a = size_t(t0 * sr), b = std::min(t.L.size(), size_t(t1 * sr));
+    double kp = 0; float pn = 0, lp1 = 0, lp2 = 0; int lastBeat = -1, lastEighth = -1;
+    for (size_t i = a; i < b; ++i)
+    {
+        const double time = i / sr - t0;
+        const int bi = int(time / beat), ei = int(time / (beat * 0.5));
+        const double bpos = time - bi * beat, epos = time - ei * beat * 0.5;
+        const bool kickBeat = (bi % 2) == 0;
+        if (bi != lastBeat) { lastBeat = bi; if (kick && kickBeat) ++t.kicks; if (snare && !kickBeat) ++t.snares; }
+        if (ei != lastEighth) { lastEighth = ei; if (hats) ++t.hats; }
+        float m = 0;
+        if (kick && kickBeat)
+        {
+            kp += 2 * PI * (48.0 + 102.0 * std::exp(-bpos * 30.0)) / sr;
+            m += float(std::sin(kp) * std::exp(-bpos * 9.0)) * 0.8f;
+        }
+        const float nz = U(rng);
+        if (snare && !kickBeat)                                  // band-passed noise + 190 Hz body
+        {
+            lp1 += 0.35f * (nz - lp1); lp2 += 0.04f * (lp1 - lp2);
+            const float bp = (lp1 - lp2) * 2.2f;
+            m += (bp + 0.3f * float(std::sin(2 * PI * 190.0 * bpos))) * float(std::exp(-bpos * 22.0)) * 0.45f;
+        }
+        if (hats) { const float hp = nz - pn; m += hp * float(std::exp(-epos * 70.0)) * 0.12f; }
+        pn = nz;
+        if (riser)
+        {
+            const double p = time / std::max(1e-9, t1 - t0);
+            m += U(rng) * 0.02f * float(p) + 0.03f * float(std::sin(2 * PI * (300 + 900 * p) * time));
+        }
+        m += U(rng) * 0.004f;                                    // room tone: never digital silence
+        t.L[i] += m; t.R[i] += m;
+    }
+}
+
+static void testDrumHits()
+{
+    const double sr = 48000, secs = 24, bpm = 124;
+    DrumTrack t; t.L.assign(size_t(secs * sr), 0.0f); t.R = t.L;
+    addDrums(t, bpm, 0, secs, sr, true, true, true, false, 7);
+    dali::FeatureExtractor fx; fx.prepare(sr);
+    runExtractor(fx, Track { t.L, t.R, {} });
+    const auto& f = fx.features();
+    const double sn = double(f.snareCount) / t.snares, hh = double(f.hatCount) / t.hats, kk = double(f.kickCount) / t.kicks;
+    std::printf("[Drums] kicks %u/%d  snares %u/%d  hats %u/%d\n", f.kickCount, t.kicks, f.snareCount, t.snares, f.hatCount, t.hats);
+    CHECK(sn > 0.8 && sn < 1.15, "snare detection ratio %.2f", sn);
+    CHECK(hh > 0.7 && hh < 1.2, "hat detection ratio %.2f", hh);
+    CHECK(kk > 0.8 && kk < 1.15, "kick detection ratio with snares present %.2f", kk);
+
+    auto plain = makeTrack(128, 20, sr);      // four-on-the-floor + off-beat hats, no snare
+    dali::FeatureExtractor fx2; fx2.prepare(sr);
+    runExtractor(fx2, plain);
+    const double beats = 20.0 * 128 / 60;
+    std::printf("[Drums] snare false positives on kick+hat track: %u of %.0f beats\n", fx2.features().snareCount, beats);
+    CHECK(fx2.features().snareCount < beats * 0.15, "snare false positives %u", fx2.features().snareCount);
+}
+
+static void testBuildDrop()
+{
+    // 0-16 s groove, 16-26 s breakdown (hats + riser, no kick), 26-36 s groove again
+    const double sr = 48000, bpm = 128;
+    DrumTrack t; t.L.assign(size_t(36 * sr), 0.0f); t.R = t.L;
+    addDrums(t, bpm, 0, 16, sr, true, true, true, false, 1);
+    addDrums(t, bpm, 16, 26, sr, false, false, true, true, 2);
+    addDrums(t, bpm, 26, 36, sr, true, true, true, false, 3);
+    dali::FeatureExtractor fx; fx.prepare(sr);
+    double dropAt = -1, time = 0; float buildGroove = 0, buildLate = 0, activityMin = 1;
+    std::uint32_t drops = 0;
+    runExtractor(fx, Track { t.L, t.R, {} }, [&](const dali::AudioFeatures& f)
+    {
+        time += dali::FeatureExtractor::hopSize / sr;
+        if (f.dropCount != drops) { drops = f.dropCount; if (dropAt < 0) dropAt = time; }
+        if (time > 4 && time < 15) buildGroove = std::max(buildGroove, f.build);
+        if (time > 23 && time < 26) buildLate = std::max(buildLate, f.build);
+        if (time > 2) activityMin = std::min(activityMin, f.activity);
+    });
+    std::printf("[Structure] drops %u (first at %.2f s)  build: groove %.2f, end of breakdown %.2f\n", drops, dropAt, buildGroove, buildLate);
+    CHECK(drops == 1, "expected exactly one drop, got %u", drops);
+    CHECK(dropAt > 25.9 && dropAt < 27.0, "drop time %.2f", dropAt);
+    CHECK(buildGroove < 0.15f, "build during groove %.2f", buildGroove);
+    CHECK(buildLate > 0.5f, "build at end of breakdown %.2f", buildLate);
+    CHECK(activityMin > 0.9f, "activity stays up while music plays (%.2f)", activityMin);
+
+    std::vector<float> z(size_t(3 * sr), 0.0f);  // silence → activity falls to 0
+    runExtractor(fx, Track { z, z, {} });
+    CHECK(fx.features().activity < 0.05f, "activity after silence %.3f", fx.features().activity);
+    CHECK(fx.features().build < 0.05f, "build after silence %.3f", fx.features().build);
+}
+
 int main()
 {
     testFFT();
@@ -291,6 +391,8 @@ int main()
     testSilenceStereoCentroid();
     testModulation();
     testClock();
+    testDrumHits();
+    testBuildDrop();
     testImageDNA();
     testExtractorCost();
     std::printf("\n%d checks, %d failures\n", checks, failures);

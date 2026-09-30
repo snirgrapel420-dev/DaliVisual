@@ -348,6 +348,32 @@ int main(int argc, char** argv)
         }
     }
 
+    // musical dynamics in the output pass: neutral / build / drop
+    std::printf("\n== output dynamics ==\n");
+    {
+        const char* names[3] = { "dyn_neutral", "dyn_build", "dyn_drop" };
+        const float build[3] = { 0.0f, 1.0f, 0.0f }, drop[3] = { 0.0f, 0.0f, 1.0f };
+        double lums[3] = {};
+        for (int k = 0; k < 3; ++k)
+        {
+            Audio au = synthAudio(4.0f);
+            float m[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+            GLuint p = progs["output"];
+            setCommon(p, W, H, 4.0f, au, m, 2);
+            glUniform1f(glGetUniformLocation(p, "uHue"), 0.0f); glUniform1f(glGetUniformLocation(p, "uSaturation"), 1.0f);
+            glUniform1f(glGetUniformLocation(p, "uBrightness"), 1.0f); glUniform1f(glGetUniformLocation(p, "uContrast"), 1.0f);
+            glUniform1f(glGetUniformLocation(p, "uDynamics"), 1.0f);
+            glUniform1f(glGetUniformLocation(p, "uBuild"), build[k]);
+            glUniform1f(glGetUniformLocation(p, "uDrop"), drop[k]);
+            bindTex(0, a.tex); draw(o);
+            double clip; int nans;
+            savePPM(o, out + "/" + names[k] + ".ppm", lums[k], clip, nans);
+            std::printf("  %-12s meanLum %6.1f  clipped %5.1f%%  NaN %d\n", names[k], lums[k], clip * 100.0, nans);
+            if (nans) ++failures;
+        }
+        if (!(lums[1] < lums[0] && lums[2] > lums[0])) { std::printf("  dynamics ordering wrong\n"); ++failures; }
+    }
+
     // image template
     if (argc >= 6)
     {

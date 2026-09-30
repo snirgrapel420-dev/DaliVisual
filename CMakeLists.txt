@@ -8,7 +8,7 @@
 #    3. FetchContent download of JUCE 8.0.4
 # =============================================================================
 cmake_minimum_required(VERSION 3.22)
-project(DaliVisual VERSION 1.0.0 LANGUAGES C CXX)
+project(DaliVisual VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -49,13 +49,14 @@ juce_add_plugin(DaliVisual
     VST3_CATEGORIES             Fx Analyzer
     COPY_PLUGIN_AFTER_BUILD     FALSE)
 
-# ---- shaders are embedded as BinaryData (names: file name with '.' → '_') ----
+# ---- shaders + scene thumbnails embedded as BinaryData (names: file name with '.' -> '_') ----
 file(GLOB DALI_SHADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/scenes/*.frag"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/fx/*.frag")
+    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/fx/*.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/thumbs/*.jpg")
 juce_add_binary_data(DaliVisualBinaryData
     HEADER_NAME BinaryData.h
     NAMESPACE   BinaryData
@@ -65,11 +66,13 @@ target_sources(DaliVisual PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/Core/Parameters.cpp
+    Source/Core/AutoPilot.cpp
     Source/Audio/FFT.cpp
     Source/Audio/BeatTracker.cpp
     Source/Audio/FeatureExtractor.cpp
     Source/Audio/MusicalClock.cpp
     Source/Audio/AudioAnalyzer.cpp
+    Source/Audio/LoopbackCapture.cpp
     Source/Modulation/ModulationCore.cpp
     Source/Modulation/ModulationMatrix.cpp
     Source/Image/ImageDNA.cpp
@@ -98,6 +101,9 @@ target_compile_definitions(DaliVisual PUBLIC
 
 if(MSVC)
     target_compile_options(DaliVisual PRIVATE /utf-8 /bigobj)
+endif()
+if(WIN32)
+    target_link_libraries(DaliVisual PRIVATE ole32)      # WASAPI loopback (system audio)
 endif()
 
 target_link_libraries(DaliVisual

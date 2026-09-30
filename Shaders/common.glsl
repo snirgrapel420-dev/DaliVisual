@@ -24,6 +24,11 @@ uniform float uCentroid;     // spectral centroid (log scaled)
 uniform float uFlux;         // spectral flux
 uniform float uWidth;        // stereo width
 uniform float uPan;          // stereo balance  -1..1
+uniform float uSnare;        // snare / clap envelope
+uniform float uHat;          // hi-hat envelope
+uniform float uBuild;        // 0..1 tension of a breakdown / build-up
+uniform float uDrop;         // 1 at a drop (kick returns after a breakdown), decays
+uniform float uActivity;     // 0 in silence .. 1 while music plays
 
 // --- musical clock -------------------------------------------------------
 uniform float uBeatPhase;    // 0..1 within the current beat

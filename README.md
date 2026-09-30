@@ -1,9 +1,19 @@
-# DALI VISUAL — by DALI AUDIO
+# DALI VISUAL 2 — by DALI AUDIO
 
 Audio-reactive generative visual instrument. **VST3 + Standalone**, one shared engine.
 C++17 · JUCE 8 · CMake · OpenGL 3.2 core / GLSL 150.
 
 ---
+
+## מה חדש ב-v2 (עברית)
+
+* **Standalone מאזין לסאונד של המחשב** (Windows) – בוחרים *System Audio* בכותרת. בלי כבל וירטואלי.
+  ב-Mac: מנתבים דרך BlackHole ובוחרים אותו כ-Audio Input.
+* **אין סאונד = אין תנועה** – התמונה נחה כשאין אודיו; המהירות נגזרת מהאנרגיה של המוזיקה (*Audio Drive*, *Idle Motion*).
+* **זיהוי מוזיקלי חדש** – Snare, Hi-Hat, Build (שבירה/עלייה) ו-Drop (חזרת הקיק), כמקורות מודולציה וכאפקט *Build / Drop*.
+* **Auto Pilot** – וריאציות לפי משפטים מוזיקליים, החלפת סצנות, קפיצה על ה-Drop.
+* **יציאה למסך** – *OUTPUT DISPLAY* + *ID* (מספר על כל מסך) + *GO LIVE* בכותרת.
+* **Settings בחלון נפרד** – תמיד מעל הכל. **Tab** מסתיר את הפאנל להגדלת התצוגה.
 
 ## התחלה מהירה (עברית)
 
@@ -46,6 +56,25 @@ Install the VST3: copy `Dali Visual.vst3` to
 Core unit tests (no JUCE, no GPU): `cmake -B build -DDALI_BUILD_TESTS=ON && cmake --build build --target DaliVisualCoreTests`
 
 ---
+
+## What's new in v2
+
+* **System Audio (standalone, Windows)** — WASAPI loopback of the default output device ("what you hear");
+  follows default-device changes and recovers from device loss. Default source in the standalone.
+  macOS has no loopback API: use BlackHole and select it as the input.
+* **Silence rests** — an activity gate (analysis + "no audio arriving" timeout) stops all motion, the beat clock
+  and beat pulses when nothing plays. *Idle Motion* sets optional motion without audio.
+* **Motion follows the music** — scene time advances with the music's energy (*Audio Drive*).
+* **New analysis** — snare/clap (spectral-flatness gated), hi-hat, **Build** (breakdown / riser tension) and
+  **Drop** (kick returns after a breakdown). New modulation sources: Snare, Hi-Hat, Build, Drop.
+  Kick detection fix: a rejected candidate no longer starts the refractory period; breakdown noise is rejected
+  by a kick-band peak memory.
+* **Musical Dynamics** (*Build / Drop* knob) — builds drain colour and close in, drops hit with a zoom/light burst.
+* **Auto Pilot** — phrase-based macro/colour variations (every 2–32 bars), optional scene changes, snap on drops.
+* **UI** — scene tiles with real renders, Settings as a real top-level window (the OpenGL preview is a native
+  child window on Windows, so nothing is drawn over it), output display chooser + *Identify* + *GO LIVE* in the
+  header, **Tab** hides the side panel, tooltips on every control, Kick/Snare/Hat/Build meters, NO SIGNAL hint.
+* 2 new factory presets (Festival - Build and Drop, Auto Pilot - Journey); factory presets updated once (v2).
 
 ## Using it
 
@@ -135,12 +164,12 @@ Verified in the development environment:
 * **All 33 shaders** compile, link and render on a real OpenGL 3.2 core driver (Mesa), assembled exactly
   as the plug-in assembles them — `Tools/ShaderHarness` (renders contact sheets of every scene, effect,
   template mode and palette; checks for NaN / black / blown-out output).
-* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 54 checks: BPM detection at 100/128/140/145/
+* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 65 checks (v2: kick 25/25, snare 25/25, hat 100/100, 0 false snares, one drop at the right moment): BPM detection at 100/128/140/145/
   150/174 BPM within ±0.5 BPM, beat-phase error ≤ 0.063 beat, level-independent AGC, stereo metrics,
   modulation curves/attack/release/polarity, image DNA on a 4000×3000 image in ~180 ms.
 
 Not verified (no JUCE / compiler for the plug-in target available there):
-* compiling the JUCE layer (processor, editor, UI, render engine host code) — written against the JUCE 8 API;
+* the v2 JUCE-layer changes (UI, WASAPI loopback) are compiled by the GitHub CI, not here;
 * VST3 validation, DAW testing, multi-monitor fullscreen on Windows/macOS, frame-rate on real GPUs.
 
 Expect a few compile errors on the first build; send the build log and they will be fixed.
