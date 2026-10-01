@@ -18,7 +18,8 @@ struct Route { ModSource src; const char* target; float amount; float attack = 5
 struct Def
 {
     const char* name;
-    std::vector<std::pair<juce::String, float>> values;
+    struct Value { juce::String id; float v; Value(const juce::String& i, double x) : id(i), v(float(x)) {} };
+    std::vector<Value> values;
     std::vector<Route> routes;
     bool templateRoutes = false;
 };
@@ -27,7 +28,7 @@ juce::ValueTree makeState(const Def& d)
 {
     juce::ValueTree st("DaliVisualState");
     juce::ValueTree p("Params");
-    for (auto& [id, v] : d.values) p.setProperty(id, v, nullptr);
+    for (auto& val : d.values) p.setProperty(val.id, val.v, nullptr);
     st.appendChild(p, nullptr);
 
     ModulationMatrix m;
@@ -237,6 +238,10 @@ std::vector<Preset> createFactoryPresets()
           { { scene, 16 }, { imgMode, 6 }, { palette, 4 }, { bloom, 0.3f }, { "tplDepth", 0.6f }, { "tplColorExtract", 0.1f },
             { "tplFeedback", 0.2f } },
           { { ModSource::Bass, "tplDepth", 0.25f, 10, 250 } } },
+        { "43 Image Reactor - Pulse",
+          { { scene, 16 }, { imgMode, 8 }, { palette, 7 }, { bloom, 0.25f }, { "tplColorExtract", 0.0f }, { "tplEdge", 0.4f },
+            { "tplFeedback", 0.25f }, { "tplDistortion", 0.3f }, { dynamics, 0.7f } },
+          {}, true },
         { "42 Image Reactor - Neon Outline",
           { { scene, 16 }, { imgMode, 7 }, { palette, 7 }, { bloom, 0.55f }, { "tplSymCount", 6 }, { "tplEdge", 0.6f },
             { "tplFeedback", 0.45f }, { dynamics, 0.8f } },

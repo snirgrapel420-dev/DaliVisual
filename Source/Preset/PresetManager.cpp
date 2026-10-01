@@ -94,11 +94,11 @@ void PresetManager::installFactoryPresets(bool overwrite)
     // Installed once per factory-set version, so presets the user deletes stay deleted.
     // Installed once per factory-set version (v2 updates the factory presets once, adds new
     // ones); user presets are never touched, and deleted factory presets stay deleted.
-    const auto marker = getPresetFolder().getChildFile(".factory_v4");
+    const auto marker = getPresetFolder().getChildFile(".factory_v5");
     if (!overwrite && marker.existsAsFile()) return;
     getPresetFolder().createDirectory();
     for (auto& p : createFactoryPresets()) p.writeTo(fileFor(p.name));
-    marker.replaceWithText("Dali Visual factory presets v4");
+    marker.replaceWithText("Dali Visual factory presets v5");
     refresh();
 }
 } // namespace dali

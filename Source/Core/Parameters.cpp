@@ -70,7 +70,7 @@ std::vector<Def> build()
 
     // --- image template --------------------------------------------------------
     C(id::imgMode, "Image Visual Mode", { "Kaleidoscope", "Liquid", "Tunnel", "Spectral Slices", "Droste",
-                                          "Glitch", "Depth 3D", "Neon Outline" }, 0, "Template");
+                                          "Glitch", "Depth 3D", "Neon Outline", "Pulse" }, 8, "Template");
     B(id::tplEnable, "Image Overlay On Scene", false, "Template");
     C(id::tplMode, "Template Mode", toArray(templateModeNames(), kNumTemplateModes), 0, "Template");
     C(id::tplBlend, "Template Blend", toArray(templateBlendNames(), kNumTemplateBlends), 0, "Template");

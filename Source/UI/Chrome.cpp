@@ -283,13 +283,13 @@ void MeterBar::paint(juce::Graphics& g)
         g.setColour(panel2); g.fillEllipse(d);
         g.setColour(c.withAlpha(juce::jlimit(0.0f, 1.0f, v))); g.fillEllipse(d);
     };
-    auto value = [&](const char* name, const juce::String& text, int w)
+    auto value = [&](const char* name, const juce::String& valueText, int w)
     {
         auto cell = r.removeFromLeft(w);
         g.setColour(textDim); g.setFont(labelFont);
         g.drawText(name, cell.removeFromLeft(30), juce::Justification::centredLeft);
         g.setColour(colours::text); g.setFont(valueFont);
-        g.drawText(text, cell, juce::Justification::centredLeft);
+        g.drawText(valueText, cell, juce::Justification::centredLeft);
     };
 
     bar("BASS", bass, accent, 112);

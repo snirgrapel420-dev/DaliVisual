@@ -37,6 +37,32 @@ void DaliVisualProcessor::setInputSource(int source)
     }
 }
 
+void DaliVisualProcessor::applyImageReactorLook(bool resetImageControls)
+{
+    auto set = [this](const juce::String& id, float realValue)
+    {
+        if (auto* p = apvts.getParameter(id))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(p->convertTo0to1(realValue));
+            p->endChangeGesture();
+        }
+    };
+
+    if (resetImageControls) templates.resetParameters();          // image controls back to defaults (mode = Pulse)
+    set(dali::params::id::tplEnable, 0.0f);                        // not an overlay: the image IS the scene
+    set("tplColorExtract", 0.0f);                                  // the image's own colours
+    for (auto& e : dali::effectLibrary()) set(dali::params::id::fxOn(e.id), 0.0f);   // nothing from the last preset
+    for (const juce::String& id : { dali::params::id::macroA, dali::params::id::macroB, dali::params::id::macroC, dali::params::id::macroD })
+        set(id, 0.5f);
+    set(dali::params::id::bloom, 0.25f);
+    set(dali::params::id::autoPilot, 0.0f);
+    matrix.clear();
+    dali::TemplateGenerator::addReactiveRoutes(matrix);            // sound-driven image routes only
+    set(dali::params::id::scene, float(dali::kImageSceneIndex));
+    presets.setCurrentName({});
+}
+
 juce::String DaliVisualProcessor::getInputSourceStatus() const
 {
     if (inputSource.load() == SystemAudio) return loopback.getStatus();

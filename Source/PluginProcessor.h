@@ -59,6 +59,11 @@ public:
 
     bool isStandalone() const noexcept { return wrapperType == wrapperType_Standalone; }
 
+    /** Message thread. Makes the loaded image the visual itself, starting clean: scene 17,
+        nothing inherited from the previous preset (effects off, image-only sound routes,
+        the image's own colours). resetImageControls also resets the image controls (new image). */
+    void applyImageReactorLook(bool resetImageControls);
+
     // ---- audio source (standalone) ---------------------------------------------------------
     enum InputSource { AudioInput = 0, SystemAudio = 1 };
     /** Message thread. SystemAudio = what the computer plays (Windows loopback). */

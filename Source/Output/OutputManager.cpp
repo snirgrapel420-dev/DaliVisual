@@ -1,13 +1,14 @@
 #include "OutputManager.h"
 #include "../UI/VisualView.h"
+#include "NativeWindow.h"
 
 namespace dali
 {
-class OutputManager::OutputWindow : public juce::Component
+class OutputManager::OutputWindow : public juce::Component, private juce::Timer
 {
 public:
-    OutputWindow(EngineState& s, const juce::Rectangle<int>& area, bool useKiosk, std::function<void()> onClose)
-        : view(s, RenderEngine::Role::Output), closeCallback(std::move(onClose)), kiosk(useKiosk)
+    OutputWindow(EngineState& s, const juce::Rectangle<int>& area, juce::Point<int> physicalCentre, std::function<void()> onClose)
+        : view(s, RenderEngine::Role::Output), closeCallback(std::move(onClose)), target(physicalCentre)
     {
         setOpaque(true);
         addAndMakeVisible(view);
@@ -18,29 +19,54 @@ public:
         addToDesktop(0);                     // no title bar, no border
         setAlwaysOnTop(true);
         setVisible(true);
-        if (kiosk) juce::Desktop::getInstance().setKioskModeComponent(this, false);
-        setBounds(area);
+        fillMonitor();
         toFront(true);
         grabKeyboardFocus();
-    }
-
-    ~OutputWindow() override
-    {
-        if (kiosk && juce::Desktop::getInstance().getKioskModeComponent() == this)
-            juce::Desktop::getInstance().setKioskModeComponent(nullptr, false);
+        startTimerHz(30);
     }
 
     void resized() override { view.setBounds(getLocalBounds()); }
     void paint(juce::Graphics& g) override { g.fillAll(juce::Colours::black); }
 
+    // ESC pressed twice (within 0.8 s) ends the live output - also when the DAW has the focus.
     bool keyPressed(const juce::KeyPress& k) override
     {
-        if (k == juce::KeyPress::escapeKey) { requestClose(); return true; }
+        if (k == juce::KeyPress::escapeKey)
+        {
+           #if ! JUCE_WINDOWS
+            registerEscape();                // Windows counts ESC in timerCallback (works without focus)
+           #endif
+            return true;
+        }
         return false;
     }
     void mouseDoubleClick(const juce::MouseEvent&) override { requestClose(); }
 
 private:
+    void fillMonitor()
+    {
+        // exact physical monitor bounds (fixes a shrunken window on a display with different scaling)
+        if (auto* peer = getPeer())
+            native::fillMonitorAt(peer->getNativeHandle(), target.x, target.y);
+    }
+
+    void registerEscape()
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (now - lastEscape < 800.0) { requestClose(); lastEscape = 0.0; }
+        else lastEscape = now;
+    }
+
+    void timerCallback() override
+    {
+        // re-apply the monitor fit for the first second (Windows may rescale after a DPI change)
+        if (++ticks == 4 || ticks == 15 || ticks == 30) fillMonitor();
+
+        const bool esc = native::isEscapeDown();
+        if (esc && !escWasDown) registerEscape();
+        escWasDown = esc;
+    }
+
     void requestClose()
     {
         auto cb = closeCallback;
@@ -49,7 +75,10 @@ private:
 
     VisualView view;
     std::function<void()> closeCallback;
-    bool kiosk;
+    juce::Point<int> target;
+    double lastEscape = 0.0;
+    bool escWasDown = true;                  // ignore an ESC that is still held from before
+    int ticks = 0;
 };
 
 class OutputManager::IdentifyWindow : public juce::Component
@@ -129,9 +158,8 @@ void OutputManager::open(int displayIndex)
 
     window.reset();
     const auto& d = displays.getReference(displayIndex);
-    // The main display needs kiosk mode to cover the menu bar / task bar.
-    window = std::make_unique<OutputWindow>(state, d.area, d.isMain,
-                                            [this] { close(); });
+    const auto physicalCentre = juce::Desktop::getInstance().getDisplays().logicalToPhysical(d.area.getCentre());
+    window = std::make_unique<OutputWindow>(state, d.area, physicalCentre, [this] { close(); });
     state.telemetry.outputActive = true;
     sendChangeMessage();
 }

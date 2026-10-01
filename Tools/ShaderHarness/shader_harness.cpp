@@ -73,6 +73,7 @@ FN(GLenum, glGetError, ())
 FN(const GLubyte*, glGetString, (GLenum))
 FN(void, glClearColor, (GLfloat, GLfloat, GLfloat, GLfloat))
 FN(void, glClear, (GLbitfield))
+FN(void, glGenerateMipmap, (GLenum))
 
 static void* lib = nullptr;
 template <typename T> static void load(T& fp, const char* name)
@@ -86,7 +87,7 @@ enum : unsigned {
     GL_FRAGMENT_SHADER = 0x8B30, GL_VERTEX_SHADER = 0x8B31, GL_COMPILE_STATUS = 0x8B81, GL_LINK_STATUS = 0x8B82,
     GL_FRAMEBUFFER = 0x8D40, GL_COLOR_ATTACHMENT0 = 0x8CE0, GL_FRAMEBUFFER_COMPLETE = 0x8CD5, GL_TEXTURE_2D = 0x0DE1,
     GL_RGBA16F = 0x881A, GL_RGBA = 0x1908, GL_FLOAT = 0x1406, GL_UNSIGNED_BYTE = 0x1401, GL_TEXTURE_MIN_FILTER = 0x2801,
-    GL_TEXTURE_MAG_FILTER = 0x2800, GL_LINEAR = 0x2601, GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803,
+    GL_TEXTURE_MAG_FILTER = 0x2800, GL_LINEAR = 0x2601, GL_LINEAR_MIPMAP_LINEAR = 0x2703, GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803,
     GL_CLAMP_TO_EDGE = 0x812F, GL_TRIANGLES = 0x0004, GL_TEXTURE0 = 0x84C0, GL_RGBA8 = 0x8058, GL_VERSION = 0x1F02,
     GL_RENDERER = 0x1F01, GL_COLOR_BUFFER_BIT = 0x4000, GL_SHADING_LANGUAGE_VERSION = 0x8B8C
 };
@@ -144,7 +145,7 @@ static Target makeTarget(int w, int h, bool hdr)
     return t;
 }
 
-struct Audio { float bass, mid, high, energy, kick, transient, beat, centroid, flux, width, pan, beatPhase, barPhase, syncPhase, beatClock; };
+struct Audio { float bass, mid, high, energy, kick, transient, beat, centroid, flux, width, pan, beatPhase, barPhase, syncPhase, beatClock, snare, hat; };
 static Audio synthAudio(float t)
 {
     Audio a{};
@@ -163,7 +164,40 @@ static Audio synthAudio(float t)
     a.centroid = 0.45f + 0.2f * std::sin(t * 0.7f);
     a.flux = 0.3f + 0.3f * a.kick;
     a.width = 0.4f; a.pan = 0.1f * std::sin(t);
+    const float half = beats * 2.0f - std::floor(beats * 2.0f);
+    a.snare = (int(beats) % 2 == 1) ? std::exp(-a.beatPhase * 8.0f) : 0.0f;
+    a.hat = std::exp(-half * 14.0f);
     return a;
+}
+
+// synthetic 128-band spectrum + waveform, shaped like a real mix (bass bump, mid body, hat sparkle)
+static GLuint gSpec = 0;
+static void updateSpectrum(float t, const Audio& a)
+{
+    const int N = 128;
+    std::vector<float> px(size_t(N) * 2 * 4);
+    for (int i = 0; i < N; ++i)
+    {
+        const float x = i / float(N - 1);
+        auto g = [&](float c, float w) { return std::exp(-((x - c) / w) * ((x - c) / w)); };
+        float v = a.bass * 0.9f * g(0.13f, 0.09f) + a.kick * 0.5f * g(0.07f, 0.05f)
+                + a.mid * 0.55f * g(0.5f, 0.22f) * (0.75f + 0.25f * std::sin(i * 0.9f + t * 4.0f))
+                + a.snare * 0.35f * g(0.45f, 0.18f) + (a.high * 0.4f + a.hat * 0.4f) * g(0.86f, 0.1f)
+                + 0.06f * (0.5f + 0.5f * std::sin(i * 2.7f + t * 11.0f));
+        v = std::fmin(std::fmax(v, 0.0f), 1.0f);
+        const float w = 0.55f * std::sin(6.2831853f * (2.0f * x + t * 0.7f)) * (0.6f + 0.4f * a.kick)
+                      + 0.3f * std::sin(6.2831853f * (13.0f * x + t * 3.0f)) * a.mid
+                      + 0.12f * std::sin(6.2831853f * (41.0f * x)) * a.hat;
+        for (int c = 0; c < 4; ++c) { px[size_t(i) * 4 + c] = v; px[size_t(N + i) * 4 + c] = w; }
+    }
+    if (gSpec == 0)
+    {
+        glGenTextures(1, &gSpec); glBindTexture(GL_TEXTURE_2D, gSpec);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    glBindTexture(GL_TEXTURE_2D, gSpec);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, N, 2, 0, GL_RGBA, GL_FLOAT, px.data());
 }
 
 static void setCommon(GLuint p, int w, int h, float t, const Audio& a, const float macro[4], int palette)
@@ -185,6 +219,12 @@ static void setCommon(GLuint p, int w, int h, float t, const Audio& a, const flo
     glUniform3f(U("uPalC"), P.c[0], P.c[1], P.c[2]); glUniform3f(U("uPalD"), P.d[0], P.d[1], P.d[2]);
     glUniform1f(U("uPalShift"), 0.0f); glUniform1f(U("uColorAmount"), 1.0f);
     glUniform1i(U("uTex"), 0); glUniform1i(U("uPrev"), 1);
+    glUniform1f(U("uSnare"), a.snare); glUniform1f(U("uHat"), a.hat); glUniform1f(U("uActivity"), 1.0f);
+    glUniform1f(U("uBassTime"), t * 0.55f + 0.4f * a.beatClock * 0.1f); glUniform1f(U("uMidTime"), t * 0.5f);
+    glUniform1f(U("uHighTime"), t * 0.45f); glUniform1f(U("uLevelTime"), t * 0.6f);
+    glUniform1i(U("uSpectrum"), 5);
+    updateSpectrum(t, a);
+    glActiveTexture(GL_TEXTURE0 + 5); glBindTexture(GL_TEXTURE_2D, gSpec);
 }
 
 static void bindTex(int unit, GLuint tex) { glActiveTexture(GL_TEXTURE0 + unit); glBindTexture(GL_TEXTURE_2D, tex); }
@@ -228,6 +268,21 @@ static GLuint uploadRGBA32F(int w, int h, const float* data)
     return tex;
 }
 
+static GLuint gDnaTex = 0, gColTex = 0; static float gAspect = 1.0f, gMask = 1.0f; static bool gHasImage = false;
+static void setImageUniforms(GLuint p, int mode)
+{
+    auto U = [&](const char* n) { return glGetUniformLocation(p, n); };
+    glUniform1i(U("uDNA"), 2); glUniform1i(U("uImgColor"), 3);
+    glUniform1f(U("uImgAspect"), gAspect); glUniform1f(U("uHasImage"), gHasImage ? 1.0f : 0.0f); glUniform1f(U("uImgMask"), gMask);
+    glUniform1f(U("uImgMotion"), 0.5f); glUniform1i(U("uImgMode"), mode);
+    glUniform1f(U("uTScale"), 1.0f); glUniform1f(U("uTAngle"), 0.1f); glUniform1f(U("uTSymCount"), 6.0f);
+    glUniform1f(U("uTWarp"), 0.25f); glUniform1f(U("uTTwist"), 0.1f); glUniform1f(U("uTFeedback"), 0.45f);
+    glUniform1f(U("uTDetail"), 0.5f); glUniform1f(U("uTDepth"), 0.5f); glUniform1f(U("uTColorExtract"), 0.2f);
+    glUniform1f(U("uTEdge"), 0.3f); glUniform1f(U("uTReact"), 1.0f); glUniform1f(U("uTDistortion"), 0.25f);
+    glActiveTexture(GL_TEXTURE0 + 2); glBindTexture(GL_TEXTURE_2D, gDnaTex);
+    glActiveTexture(GL_TEXTURE0 + 3); glBindTexture(GL_TEXTURE_2D, gColTex);
+}
+
 int main(int argc, char** argv)
 {
     if (argc < 3) { std::printf("usage: shader_harness <ShadersDir> <outDir> [image.rgba w h]\n"); return 1; }
@@ -256,7 +311,7 @@ int main(int argc, char** argv)
     L(glUniform1i); L(glGenVertexArrays); L(glBindVertexArray); L(glGenFramebuffers); L(glBindFramebuffer);
     L(glFramebufferTexture2D); L(glCheckFramebufferStatus); L(glGenTextures); L(glBindTexture); L(glTexImage2D);
     L(glTexParameteri); L(glActiveTexture); L(glViewport); L(glDrawArrays); L(glReadPixels); L(glFinish);
-    L(glGetError); L(glGetString); L(glClearColor); L(glClear);
+    L(glGetError); L(glGetString); L(glClearColor); L(glClear); L(glGenerateMipmap);
 
     std::printf("GL: %s | %s | GLSL %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER), glGetString(GL_SHADING_LANGUAGE_VERSION));
 
@@ -266,14 +321,18 @@ int main(int argc, char** argv)
 
     const char* scenes[] = { "scene_01_kinetic_kaleido", "scene_02_organic_flux", "scene_03_infinite_tunnel",
         "scene_04_fractal_temple", "scene_05_acid_matrix", "scene_06_liquid_dream", "scene_07_neural_bloom",
-        "scene_08_psychedelic_void" };
+        "scene_08_psychedelic_void", "scene_09_kali_cathedral", "scene_10_spectral_mandala", "scene_11_julia_bloom",
+        "scene_12_hyperspace", "scene_13_iridescent_oil", "scene_14_hyperbolic_dream", "scene_15_infinite_feedback",
+        "scene_16_waveform_geometry", "scene_17_image_reactor" };
+    const char* onlyScene = std::getenv("DALI_ONLY");            // dev mode: render one scene large
     const char* fx[] = { "fx_blur", "fx_glow", "fx_feedback", "fx_kaleidoscope", "fx_mirror", "fx_twist", "fx_warp",
         "fx_noise", "fx_chromatic", "fx_rgbsplit", "fx_displacement", "fx_pixelate", "fx_posterize", "fx_invert",
         "fx_contrast", "fx_brightness", "fx_saturation", "fx_hueshift", "fx_vignette", "fx_trails" };
 
     std::printf("\n== compile ==\n");
     std::map<std::string, GLuint> progs;
-    for (auto s : scenes) progs[s] = program(readFile(dir + "/scenes/" + s + ".frag"), s);
+    for (auto s : scenes)
+        if (!onlyScene || std::strstr(s, onlyScene)) progs[s] = program(readFile(dir + "/scenes/" + s + ".frag"), s);
     for (auto s : fx) progs[s] = program(readFile(dir + "/fx/" + s + ".frag"), s);
     progs["template_layer"] = program(readFile(dir + "/template_layer.frag"), "template_layer");
     progs["template_composite"] = program(readFile(dir + "/template_composite.frag"), "template_composite");
@@ -281,7 +340,10 @@ int main(int argc, char** argv)
     progs["crossfade"] = program(readFile(dir + "/crossfade.frag"), "crossfade");
     if (failures) { std::printf("\n%d shader failures\n", failures); return 1; }
 
-    const int W = 480, H = 270, FRAMES = 48;
+    const int W = onlyScene ? (std::getenv("DALI_W") ? std::atoi(std::getenv("DALI_W")) : 960) : 480;
+    const int H = onlyScene ? (std::getenv("DALI_H") ? std::atoi(std::getenv("DALI_H")) : 540) : 270;
+    const int FRAMES = std::getenv("DALI_FRAMES") ? std::atoi(std::getenv("DALI_FRAMES")) : 48;
+    const float T0 = std::getenv("DALI_T") ? float(std::atof(std::getenv("DALI_T"))) : 3.0f;
     Target a = makeTarget(W, H, true), b = makeTarget(W, H, true), o = makeTarget(W, H, true);
     Target fxA = makeTarget(W, H, true), fxB = makeTarget(W, H, true);
 
@@ -291,24 +353,45 @@ int main(int argc, char** argv)
         GLuint p = progs["output"];
         glUniform1f(glGetUniformLocation(p, "uHue"), 0.0f); glUniform1f(glGetUniformLocation(p, "uSaturation"), 1.0f);
         glUniform1f(glGetUniformLocation(p, "uBrightness"), 1.0f); glUniform1f(glGetUniformLocation(p, "uContrast"), 1.0f);
-        bindTex(0, src); draw(o);
+        glUniform1f(glGetUniformLocation(p, "uBloom"), 0.55f); glUniform1f(glGetUniformLocation(p, "uDynamics"), 0.0f);
+        bindTex(0, src);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        draw(o);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     };
+
+    if (argc >= 6)
+    {
+        int iw = std::atoi(argv[4]), ih = std::atoi(argv[5]);
+        std::vector<unsigned char> rgba(size_t(iw) * ih * 4);
+        FILE* fi = std::fopen(argv[3], "rb"); std::fread(rgba.data(), 1, rgba.size(), fi); std::fclose(fi);
+        dali::ImageDNA d = dali::ImageDNA::analyse(rgba.data(), iw, ih, 512);
+        gDnaTex = uploadRGBA32F(d.width, d.height, d.dna.data());
+        gColTex = uploadRGBA32F(d.width, d.height, d.color.data());
+        gAspect = d.aspect; gHasImage = true; gMask = d.hasAlpha ? 1.0f : 0.0f;
+    }
+    const int imgModeEnv = std::getenv("DALI_IMGMODE") ? std::atoi(std::getenv("DALI_IMGMODE")) : 0;
 
     std::printf("\n== render scenes ==\n");
     int sceneIdx = 0;
     for (auto s : scenes)
     {
+        if (onlyScene && !std::strstr(s, onlyScene)) { ++sceneIdx; continue; }
+        const bool heavy = sceneIdx >= 8 && !std::strstr(s, "feedback") && !std::strstr(s, "image_reactor");   // raymarchers: fewer frames on the CPU rasteriser
+        const int frames = heavy ? std::min(FRAMES, 4) : FRAMES;
         Target* cur = &a; Target* prev = &b;
         glBindFramebuffer(GL_FRAMEBUFFER, a.fbo); glClear(GL_COLOR_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, b.fbo); glClear(GL_COLOR_BUFFER_BIT);
         float macro[4] = { 0.5f, 0.55f, 0.6f, 0.55f };
         float t = 0; Audio au{};
-        for (int f = 0; f < FRAMES; ++f)
+        for (int f = 0; f < frames; ++f)
         {
-            t = 3.0f + f / 60.0f * 2.0f;
+            t = T0 + float(f - frames) / 60.0f * 2.0f + 0.0333f * frames;
             au = synthAudio(t);
-            static const int scenePal[8] = { 2, 7, 2, 2, 1, 5, 2, 2 };
-            setCommon(progs[s], W, H, t, au, macro, scenePal[sceneIdx]);
+            static const int scenePal[16] = { 2, 7, 2, 2, 1, 5, 2, 2, 7, 7, 2, 4, 7, 7, 7, 5 };
+            setCommon(progs[s], W, H, t, au, macro, scenePal[sceneIdx < 16 ? sceneIdx : 7]);
+            if (std::strstr(s, "image_reactor")) setImageUniforms(progs[s], imgModeEnv);
             bindTex(1, prev->tex);
             draw(*cur);
             std::swap(cur, prev);
@@ -320,6 +403,33 @@ int main(int argc, char** argv)
         std::printf("  %-28s meanLum %6.1f  clipped %5.1f%%  NaN %d %s\n", s, lum, clip * 100.0, nans, bad ? "<-- CHECK" : "");
         if (nans) ++failures;
         ++sceneIdx;
+    }
+
+    if (onlyScene) { std::printf("%s\n", failures ? "HARNESS: FAILURES" : "HARNESS: ALL PASSED"); return failures ? 1 : 0; }
+
+    std::printf("\n== image reactor modes ==\n");
+    {
+        const char* names[9] = { "kaleidoscope", "liquid", "tunnel", "slices", "droste", "glitch", "depth3d", "neon", "pulse" };
+        GLuint p = progs["scene_17_image_reactor"];
+        for (int mode = 0; mode < 9; ++mode)
+        {
+            Target* cur = &a; Target* prev = &b;
+            glBindFramebuffer(GL_FRAMEBUFFER, a.fbo); glClear(GL_COLOR_BUFFER_BIT);
+            glBindFramebuffer(GL_FRAMEBUFFER, b.fbo); glClear(GL_COLOR_BUFFER_BIT);
+            float macro[4] = { 0.5f, 0.5f, 0.5f, 0.5f }; float t = 0; Audio au{};
+            for (int f = 0; f < 10; ++f)
+            {
+                t = 4.0f + f / 30.0f; au = synthAudio(t);
+                setCommon(p, W, H, t, au, macro, 7);
+                setImageUniforms(p, mode);
+                bindTex(1, prev->tex); draw(*cur); std::swap(cur, prev);
+            }
+            runOutput(prev->tex, t, au);
+            double lum, clip; int nans;
+            savePPM(o, out + "/image_" + names[mode] + ".ppm", lum, clip, nans);
+            std::printf("  %-14s meanLum %6.1f  clipped %5.1f%%  NaN %d%s\n", names[mode], lum, clip * 100.0, nans, lum < 4.0 ? "  <-- CHECK" : "");
+            if (nans) ++failures;
+        }
     }
 
     // effects on top of scene 01's final frame (a/b hold last scene; re-render scene 01 into 'a')

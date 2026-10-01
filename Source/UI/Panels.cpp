@@ -587,13 +587,13 @@ ImagePanel::ImagePanel(DaliVisualProcessor& p)
             auto* b = modeButtons.add(new juce::TextButton(choiceParam->choices[i]));
             b->onClick = [this, i]
             {
+                showImageScene();
                 if (auto* prm = proc.apvts.getParameter(params::id::imgMode))
                 {
                     prm->beginChangeGesture();
                     prm->setValueNotifyingHost(prm->convertTo0to1(float(i)));
                     prm->endChangeGesture();
                 }
-                showImageScene();
             };
             addAndMakeVisible(b);
         }
@@ -634,12 +634,9 @@ ImagePanel::~ImagePanel() { proc.image.removeChangeListener(this); }
 
 void ImagePanel::showImageScene()
 {
-    if (auto* prm = proc.apvts.getParameter(params::id::scene))
-    {
-        prm->beginChangeGesture();
-        prm->setValueNotifyingHost(prm->convertTo0to1(float(kImageSceneIndex)));
-        prm->endChangeGesture();
-    }
+    // coming from another scene: start clean so nothing of that preset is applied to the image
+    const bool alreadyShowing = juce::roundToInt(proc.apvts.getRawParameterValue(params::id::scene)->load()) == kImageSceneIndex;
+    if (!alreadyShowing) proc.applyImageReactorLook(false);
 }
 
 void ImagePanel::timerCallback()
@@ -653,7 +650,7 @@ void ImagePanel::timerCallback()
 
 int ImagePanel::preferredHeight(int)
 {
-    return kPad * 6 + kHeaderH * 4 + 36 + 140 + 20 + 30 + 36 + 2 * 30 + ((13 + 3) / 4) * kKnobH
+    return kPad * 6 + kHeaderH * 4 + 36 + 140 + 20 + 30 + 36 + 3 * 30 + ((13 + 3) / 4) * kKnobH
            + 30 + 30 + 2 * kKnobH + 32;
 }
 
@@ -671,10 +668,11 @@ void ImagePanel::resized()
     r.removeFromTop(kPad);
 
     modeHeader.setBounds(r.removeFromTop(kHeaderH));
-    auto grid = r.removeFromTop(2 * 30);
-    const int bw = grid.getWidth() / 4;
+    const int rowsM = (modeButtons.size() + 2) / 3;
+    auto grid = r.removeFromTop(rowsM * 30);
+    const int bw = grid.getWidth() / 3;
     for (int i = 0; i < modeButtons.size(); ++i)
-        modeButtons[i]->setBounds(juce::Rectangle<int>(grid.getX() + (i % 4) * bw, grid.getY() + (i / 4) * 30, bw, 30).reduced(2));
+        modeButtons[i]->setBounds(juce::Rectangle<int>(grid.getX() + (i % 3) * bw, grid.getY() + (i / 3) * 30, bw, 30).reduced(2));
     r.removeFromTop(kPad);
 
     controlHeader.setBounds(r.removeFromTop(kHeaderH));
@@ -739,7 +737,7 @@ void ImagePanel::chooseImage()
         [this](const juce::FileChooser& fc)
         {
             const auto f = fc.getResult();
-            if (f.existsAsFile() && proc.image.loadFile(f)) showImageScene();
+            if (f.existsAsFile() && proc.image.loadFile(f)) proc.applyImageReactorLook(true);
         });
 }
 

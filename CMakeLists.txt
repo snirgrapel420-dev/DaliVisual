@@ -82,6 +82,7 @@ target_sources(DaliVisual PRIVATE
     Source/Render/RenderTarget.cpp
     Source/Render/RenderEngine.cpp
     Source/Output/OutputManager.cpp
+    Source/Output/NativeWindow.cpp
     Source/Midi/MidiMapper.cpp
     Source/Preset/PresetManager.cpp
     Source/Preset/FactoryPresets.cpp

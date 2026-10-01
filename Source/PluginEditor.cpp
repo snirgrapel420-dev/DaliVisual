@@ -102,13 +102,8 @@ void DaliVisualEditor::filesDropped(const juce::StringArray& files, int, int)
         const juce::File f(path);
         if (dali::ImageProcessor::isSupportedFile(f) && proc.image.loadFile(f))
         {
-            // the image becomes the visual itself: switch to the Image Reactor scene
-            if (auto* prm = proc.apvts.getParameter(dali::params::id::scene))
-            {
-                prm->beginChangeGesture();
-                prm->setValueNotifyingHost(prm->convertTo0to1(float(dali::kImageSceneIndex)));
-                prm->endChangeGesture();
-            }
+            // the image becomes the visual itself, starting clean (nothing inherited from the last preset)
+            proc.applyImageReactorLook(true);
             if (!panelVisible) setPanelVisible(true);
             tabs.setCurrentTabIndex(ImageTab);
             return;

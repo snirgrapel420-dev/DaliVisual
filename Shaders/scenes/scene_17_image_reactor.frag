@@ -2,7 +2,7 @@
 //   Motion comes from the band clocks (uBassTime, uMidTime, ...) and the spectrum — never from a
 //   tempo grid: no sound, no motion.
 //   Modes: 0 Kaleidoscope · 1 Liquid · 2 Tunnel · 3 Spectral Slices · 4 Droste · 5 Glitch ·
-//          6 Depth 3D · 7 Neon Outline
+//          6 Depth 3D · 7 Neon Outline · 8 Pulse (the image itself, whole and recognisable)
 //   Image DNA: R luminance · G edges · B distance to edges · A presence (foreground)
 // Macros: A Motion · B Reactivity · C Zoom · D Trails
 
@@ -168,6 +168,37 @@ vec3 render(vec2 p)
         float sp = pow(max(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0), 20.0 + 60.0 * uHigh);
         col = img(qq) * (0.35 + 0.9 * dif) + vec3(sp) * (0.2 + 0.8 * uHigh * R);
         col += palette(hc + uPalShift) * smoothstep(0.7, 1.0, hc) * uKick * R * 0.8;
+    }
+    else if (uImgMode == 8)                              // PULSE — the image itself, whole, alive with the sound
+    {
+        vec2 fs = fitSize();
+        vec2 halfScreen = vec2(uRes.x / uRes.y * 0.5, 0.5);
+        // logos (transparency) float at ~70 % height; photos cover the whole frame
+        float cover = max(halfScreen.x / (fs.x * 0.5), halfScreen.y / (fs.y * 0.5));
+        float fitK = mix(cover * 1.02, 0.7, uImgMask);                    // q = p / fitK
+        vec2 q = p / fitK;
+        float punch = 1.0 + (0.06 * uBass + 0.16 * uKick) * R;          // kick pushes it towards you
+        q = rot(uTAngle + 0.04 * sin(uMidTime * 0.5 * M) * (0.3 + uTTwist * 3.0)) * q / punch * zoom;
+        // spectral ripple: each row moves with the frequency band at its height
+        float yN = clamp(q.y / fs.y + 0.5, 0.0, 1.0);
+        q.x += (spec(0.03 + yN * 0.9) - 0.2) * (0.01 + 0.06 * uTWarp) * R * sin(q.y * 34.0 + uMidTime * 2.0 * M);
+        float ca = (0.002 + 0.03 * uTDistortion) * (0.2 + 2.5 * uSnare * R);
+        vec2 lim = fs * 0.5;
+        float inside = step(abs(q.x), lim.x) * step(abs(q.y), lim.y);
+        vec3 bg = palette(0.6 + uPalShift) * 0.04 * (0.4 + uBass * R);
+        vec3 im = vec3(img(q + vec2(ca, 0.0)).r, img(q).g, img(q - vec2(ca, 0.0)).b);
+        col = mix(bg, im, inside);
+        // outline echoes radiating behind the image, one per frequency band
+        for (int k = 1; k <= 4; k++)
+        {
+            float fk = float(k);
+            vec2 qk = q / (1.0 + fk * (0.10 + 0.08 * uEnergy));
+            float ink = step(abs(qk.x), lim.x) * step(abs(qk.y), lim.y);
+            vec4 d = dna(qk);
+            float band = specBand((fk - 1.0) / 4.0, fk / 4.0);
+            col += palette(fk * 0.17 + uPalShift) * d.g * ink * band * R * (0.5 + uTEdge) * (1.2 - fk * 0.2) * (1.0 - inside * d.a * uImgMask) * mix(0.3, 1.0, uImgMask);
+        }
+        col *= 1.0 + 0.35 * uKick * R;
     }
     else                                                 // NEON OUTLINE — contours echo outward
     {
