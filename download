@@ -1,0 +1,15 @@
+build/
+build-*/
+.deps/
+JUCE/
+cmake-build-*/
+out/
+.vs/
+.vscode/
+.idea/
+*.user
+.DS_Store
+Tests/core_tests
+Tools/ShaderHarness/shader_harness
+shader-out/
+hout/

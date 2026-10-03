@@ -1,9 +1,19 @@
-# DALI VISUAL 3 — by DALI AUDIO
+# DALI VISUAL 4 — by DALI AUDIO
 
 Audio-reactive generative visual instrument. **VST3 + Standalone**, one shared engine.
 C++17 · JUCE 8 · CMake · OpenGL 3.2 core / GLSL 150.
 
 ---
+
+## מה חדש ב-v4 (עברית)
+
+* **כיוון ויזואלי חדש: שישה עולמות** (סצנות 18–23) – Sacred Bloom, Tidal Cathedral, Liquid Glass, Mycelium,
+  Hyperdimension, Solar Temple. לכל עולם פלטה מתוכננת של 3–4 צבעים (+2 וריאציות ב-Macro D) ופרשנות משלו לסאונד.
+* **מנוע ניתוח מוזיקלי מלא** – שש רצועות (Sub…High), שלוש שכבות זמן (מהיר/בינוני/איטי), צפיפות קיקים ומכות,
+  טווח דינמי, ו**מצב מוזיקלי**: CALM → BUILD → PEAK → CHAOS → RELEASE. כל עולם משנה התנהגות לפי המצב.
+* **Custom Image בסגנון Photism** – Flow Lines ו-Flow Paint: הוויזואל נבנה ממבנה התמונה עצמה (שדה כיוונים,
+  קצוות, אזורים) ובפלטה שחולצה ממנה. ברירת המחדל לתמונה חדשה: Flow Lines.
+* **פריסטים חדשים** A1–F3 (3 לכל עולם), G1–G2 (תמונה), H1 (מסע בין העולמות).
 
 ## מה חדש ב-v3 (עברית)
 
@@ -69,6 +79,24 @@ Install the VST3: copy `Dali Visual.vst3` to
 Core unit tests (no JUCE, no GPU): `cmake -B build -DDALI_BUILD_TESTS=ON && cmake --build build --target DaliVisualCoreTests`
 
 ---
+
+## What's new in v4 — a new visual direction
+
+* **Six generative worlds** (scenes 18–23), designed composition-first with limited, planned palettes
+  (`ramp4()` through 3–4 chosen colours; macro D blends three palette variants) — no rainbow cycling.
+  Each world interprets the same analysis differently: kick = heartbeat contraction (Sacred Bloom), a wave of light
+  down the nave (Tidal Cathedral), an impact ripple (Liquid Glass), a signal along the filaments (Mycelium), tunnel
+  expansion (Hyperdimension), a pulse ring to ring (Solar Temple).
+* **Musical analysis engine** — six bands (sub 20–60, bass, low-mid 150–500, mid, high-mid 2–6k, high), three time
+  scales (FAST envelopes, MEDIUM ~0.5 s, SLOW 2–4 s), kick/onset densities, dynamic range (crest factor), and a
+  **musical state machine** CALM / BUILD / PEAK / CHAOS / RELEASE with hysteresis, dwell times and cross-faded
+  weights (`uState`, `uStateRelease`). Build = a kick-less passage after kicks whose upper bands rise in absolute
+  level (a pad swell, a fading outro or a kick dropping out is not a build). Verified on a 110 s structured test track.
+* **Photism-style image engine** — ImageDNA adds a structure-tensor flow field (contour tangent + coherence) and a
+  palette-region map. New Image Reactor modes **Flow Lines** (line-integral streamlines of the image's own structure)
+  and **Flow Paint** (feedback painting advected along it), coloured from the image's extracted palette.
+* 13 new modulation sources (Sub, Low Mid, High Mid, Bass/Energy slow, densities, dynamic range, state weights).
+* New presets A1–F3, G1–G2, H1 (Auto Pilot keeps the journey within the six worlds).
 
 ## What's new in v3 — the picture follows the sound itself
 
@@ -195,7 +223,7 @@ Verified in the development environment:
 * **All 33 shaders** compile, link and render on a real OpenGL 3.2 core driver (Mesa), assembled exactly
   as the plug-in assembles them — `Tools/ShaderHarness` (renders contact sheets of every scene, effect,
   template mode and palette; checks for NaN / black / blown-out output).
-* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 78 checks (v3: spectrum band accuracy, waveform; v2: kick 25/25, snare 25/25, hat 100/100, 0 false snares, one drop at the right moment): BPM detection at 100/128/140/145/
+* **DSP / modulation / image core** — `Tests/CoreTests.cpp`, 90 checks (v4: musical state on a full track structure, image flow field; v3: spectrum band accuracy, waveform; v2: kick 25/25, snare 25/25, hat 100/100, 0 false snares, one drop at the right moment): BPM detection at 100/128/140/145/
   150/174 BPM within ±0.5 BPM, beat-phase error ≤ 0.063 beat, level-independent AGC, stereo metrics,
   modulation curves/attack/release/polarity, image DNA on a 4000×3000 image in ~180 ms.
 
